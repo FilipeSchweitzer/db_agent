@@ -12,9 +12,10 @@ fdb==2.0.2              # Firebird / Interbase
 pyodbc==5.1.0            # SQL Server via ODBC
 psycopg2-binary==2.9.9   # PostgreSQL (destino, na maioria dos casos)
 
-# LLM
-anthropic==0.39.0
-openai==1.54.0            # usado também para falar com Ollama (API compatível)
+# LLM — o cliente padrão fala a API compatível com OpenAI (OpenAI, Ollama,
+# vLLM, OpenRouter...). O backend Anthropic é opcional e NÃO está aqui:
+#   pip install "migra-agent[anthropic]"
+openai==1.54.0
 
 # Revisão humana / relatórios
 pandas==2.2.3

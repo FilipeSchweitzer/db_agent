@@ -52,14 +52,16 @@ de formato, flag `pii`, notas e uma lista de `risks`. O código então **sobresc
 `table` e `row_count` com os valores determinísticos, para o modelo não inventar
 números (`app/agents/agent1_discovery.py:65-67`).
 
-**Fase 2 — Mapping.** Recebe o relatório inteiro de discovery + o
-`target_schema.yaml` e pede ao LLM um `MappingDocument` cobrindo **todos** os
-campos de destino: origem provável, transformação (escolhida de uma lista
-fechada), confiança (`high`/`medium`/`low`), `requires_human_review` e
-justificativa. Regra dura no prompt: campo `pii=true` no destino **sempre** exige
-revisão humana, mesmo com confiança alta. Se não houver correspondência razoável,
-o campo vai para `unmapped_target_fields` em vez de o modelo forçar um palpite
-(`app/agents/agent2_mapping.py:17-34`).
+**Fase 2 — Mapping.** Recebe o relatório de discovery + o `target_schema.yaml` e
+pede ao LLM, **uma tabela de destino por chamada**, as entradas daquela tabela:
+origem provável, transformação (escolhida de uma lista fechada), confiança
+(`high`/`medium`/`low`), `requires_human_review` e justificativa. Regra dura no
+prompt: campo `pii=true` no destino **sempre** exige revisão humana, mesmo com
+confiança alta. Se não houver correspondência razoável, o campo vai para
+`unmapped_target_fields` em vez de o modelo forçar um palpite. O código então
+normaliza a resposta: descarta campo inventado, remove entrada duplicada, força
+`target_table` a vir do schema e registra em `warnings` tudo o que não veio do
+modelo (`app/agents/agent2_mapping.py`).
 
 **Fase 3 — Generate.** Relê a planilha revisada, reagrupa as entradas aprovadas
 por tabela de destino e renderiza `INSERT INTO ... SELECT ... FROM`, aplicando as
@@ -87,9 +89,9 @@ CLI (typer)                    app/main.py
         ├── Config             app/config.py              ← project.yaml + env
         ├── Banco              app/db/connectors.py       ← engine por dialeto
         │                      app/db/introspection.py    ← "tools" de leitura
-        ├── LLM                app/llm/client.py          ← ABC
-        │                      app/llm/backend_cloud.py   ← Anthropic
-        │                      app/llm/backend_local.py   ← Ollama (API OpenAI)
+        ├── LLM                app/llm/client.py          ← ABC + retry/parse/telemetria
+        │                      app/llm/backend_openai.py  ← OpenAI / Ollama / qualquer compatível
+        │                      app/llm/backend_anthropic.py ← opcional (extra)
         ├── Agentes            app/agents/agent1..3.py
         ├── Contratos          app/schemas/*.py           ← Pydantic, fronteira de validação
         ├── Transformações     app/transforms/registry.py ← lista fechada
@@ -108,9 +110,9 @@ CLI (typer)                    app/main.py
    é marcado para revisão em vez de o modelo inventar algo ad-hoc. Isso troca
    cobertura por previsibilidade — uma troca correta para dados de cidadão.
 3. **Interface de LLM trocável.** Os agentes só conhecem `LLMClient.complete_structured()`
-   (`app/llm/client.py`). Cloud e local são plugáveis por `LLM_BACKEND`, e o
-   local fala com o Ollama pela API compatível com OpenAI — mesma interface, sem
-   `if backend == ...` dentro dos agentes.
+   (`app/llm/client.py`). Todo backend que fala a API OpenAI (OpenAI, Ollama, vLLM,
+   OpenRouter) usa `backend_openai.py`; o Anthropic é um extra opcional. Nenhum
+   provedor é privilegiado, e não há `if backend == ...` dentro dos agentes.
 4. **Toda saída do modelo é validada contra um schema Pydantic.** Nunca texto
    livre. Se o modelo devolver algo fora do contrato, falha alto na borda em vez
    de contaminar a planilha.
@@ -122,7 +124,8 @@ CLI (typer)                    app/main.py
 ### 3.3 Stack
 
 Python 3.11 · Typer + Rich (CLI) · Pydantic 2 (contratos) · SQLAlchemy 2 +
-`fdb`/`pyodbc`/`psycopg2` (bancos) · Anthropic SDK + OpenAI SDK (LLMs) ·
+`fdb`/`pyodbc`/`psycopg2` (bancos) · OpenAI SDK — compatível com OpenAI, Ollama,
+vLLM, OpenRouter; Anthropic SDK só no extra opcional (LLMs) ·
 pandas + openpyxl (planilha de revisão) · Docker Compose com perfil `local` para
 subir o Ollama junto.
 
@@ -159,7 +162,7 @@ em um cliente de verdade".
 | # | Lacuna | Onde | Por que importa |
 |---|---|---|---|
 | C1 | **Chave substituta (surrogate key) não é tratada.** `references: bairro.id` é declarado no target schema mas **nunca lido por nenhum código**. | `app/schemas/target_schema.py:17` | É *o* problema de migração real: `pessoa.cod_bairro` no legado referencia o código antigo, mas `bairro.id` no destino é `SERIAL`. Sem uma tabela de-para de chaves, todo INSERT com FK quebra ou aponta para o registro errado. |
-| C2 | **`max_tokens=4096` fixo + schema inteiro em um único prompt.** | `app/llm/backend_cloud.py:30`, `app/agents/agent2_mapping.py:51-56` | Com 20 tabelas de destino o JSON de resposta estoura 4096 tokens, trunca e `json.loads` falha. Não há retry, não há chunking, não há reparo. Em cliente real a fase 2 não completa. |
+| C2 | ~~**`max_tokens=4096` fixo + schema inteiro em um único prompt.**~~ **Resolvido na Fase 1:** o Agente 2 agora mapeia **uma tabela de destino por chamada** (`MappingAgent.run`), e o `max_tokens` vem de `LLM_MAX_TOKENS`. | `app/agents/agent2_mapping.py` | Histórico: com 20 tabelas o JSON estourava 4096 tokens, truncava e `json.loads` falhava. Hoje o tamanho da resposta é proporcional a uma tabela, não ao schema inteiro. |
 | C3 | **ETL sem DDL, sem lote, sem transação, sem idempotência.** Gera só `INSERT INTO ... SELECT`; `batch_size` e `etl.engine` são config morta. | `app/agents/agent3_etl.py:41-72` | Rodar o script duas vezes duplica os dados. Não cria tabelas/sequences/FKs no destino. Não ordena por dependência de FK. Não tem `BEGIN`/`COMMIT`/rollback. |
 | C4 | **PII vai para a nuvem.** `top_values` reais (CPF, nome, endereço) entram no prompt enviado ao Anthropic. | `app/db/introspection.py:61-76` → `agent1_discovery.py:56-60` | Exposição de dado pessoal a terceiro sem base legal explícita — problema de LGPD, não de engenharia. |
 | C5 | **Suspeita de dependência faltando para Firebird.** `requirements.txt` pina `sqlalchemy==2.0.35` e inclui `fdb`, mas não `sqlalchemy-firebird`. | `requirements.txt:10-11` | O dialeto Firebird saiu do core do SQLAlchemy 2.0 para o pacote `sqlalchemy-firebird`. Se confirmado, `create_engine("firebird+fdb://...")` levanta `NoSuchModuleError` — ou seja, o dialeto legado principal não conecta. **Verificar rodando `pip install -r requirements.txt` e um `build_url` + `create_engine` de teste.** |
@@ -173,8 +176,8 @@ em um cliente de verdade".
 | A3 | **`FETCH FIRST n ROWS ONLY` não é T-SQL.** Quebra a introspecção quando a origem é SQL Server (e o README promete SQL Server). | `app/db/introspection.py:48,65` |
 | A4 | **Validação de somente-leitura é regex frágil.** Não bloqueia `merge`, `grant`, `create`, `call`, `execute`, `copy`, nem múltiplos statements. | `app/db/introspection.py:85-87` |
 | A5 | **Não há prova do que foi aprovado.** O `generate` relê `mapping.json` (não a planilha) e aplica os status por cima. Se `mapping.json` for regerado entre a revisão e o `generate`, o script sai de um mapeamento diferente do revisado — sem aviso. Falta hash/assinatura do par (mapping + planilha). | `app/orchestrator.py:63-67` |
-| A6 | **`OUTPUT_ROOT = /app/output` hardcoded.** Impossível rodar fora do container — mata teste de integração, CI e execução local. | `app/orchestrator.py:16` |
-| A7 | **Sem retry/backoff em chamada de LLM** e sem contabilização de tokens/custo por fase. | `app/llm/*` |
+| A6 | ~~**`OUTPUT_ROOT = /app/output` hardcoded.**~~ **Resolvido na Fase 1:** `OUTPUT_ROOT` lê `OUTPUT_ROOT` do ambiente (padrão `/app/output`), o que permite testar e rodar fora do container. | `app/orchestrator.py:17` |
+| A7 | ~~**Sem retry/backoff em chamada de LLM** e sem contabilização de tokens/custo por fase.~~ **Resolvido na Fase 1:** `LLMClient.complete_structured` faz até `LLM_MAX_ATTEMPTS` tentativas com backoff exponencial + jitter, só repete erro transitório, realimenta o erro de validação no prompt e registra tokens/latência por tentativa em `run_log.json`. | `app/llm/client.py`, `app/orchestrator.py:32` |
 | A8 | **`load_reviewed_xlsx` descarta linhas desconhecidas em silêncio** e explode com `ValueError` cru se o analista digitar um `status` inválido na planilha. | `app/review/export.py:44-48,67` |
 
 ### 5.3 Médio
@@ -191,10 +194,10 @@ em um cliente de verdade".
 - **Descoberta rasa em relacionamento:** não infere FK implícita ("cod_bairro"
   apontando para "bairro"), não detecta órfãos, não mede min/max de datas nem
   distribuição além do top-10.
-- **Config morta / inconsistente:** `CLIENT_PROJECT` no `.env.example` não é lido
-  por ninguém; `unmapped_source_fields` nunca é preenchido; `validator` do target
-  schema nunca é usado; `config.py:41` exige que o nome da pasta seja idêntico ao
-  campo `project`.
+- **Config morta / inconsistente:** `unmapped_source_fields` nunca é preenchido;
+  `validator` do target schema nunca é usado; `config.py:41` exige que o nome da
+  pasta seja idêntico ao campo `project`. (`CLIENT_PROJECT` saiu do `.env.example`
+  na Fase 1 — não era lido por ninguém.)
 - **Identificadores SQL interpolados sem quoting** em `sample_rows`,
   `profile_column` (`introspection.py:44-67`). Hoje os nomes vêm do `inspect()`,
   não do LLM, então o risco é baixo — mas não há defesa em profundidade.
@@ -203,14 +206,19 @@ em um cliente de verdade".
 
 ### 5.4 Baixo (mas cobra juros)
 
-- **3 testes, um arquivo, só `build_url`.** Zero cobertura para: prompt/shape dos
-  agentes, `render_sql`, round-trip Excel (`export_to_xlsx` → `load_reviewed_xlsx`),
-  geração do `etl_script.sql`, `detect_pii_by_name`. Para um produto onde o erro
-  custa dado de cidadão, isso é o maior risco silencioso do repo.
-- **Sem `pyproject.toml`**, sem ruff/black, sem mypy/pyright, sem pre-commit, sem
-  CI (`.github/` não existe). Versões pinadas só em `requirements.txt`.
-- **Sem repositório git inicializado** — não há histórico, nem blame, nem forma de
-  revisar mudança.
+- **Cobertura de teste ainda curta.** A Fase 1 levou a suíte de 3 para 36 testes
+  (cliente de LLM, retry, seleção de backend, schema estrito, chunking do Agente 2,
+  `run_log`), mas continuam sem teste: `render_sql`, round-trip Excel
+  (`export_to_xlsx` → `load_reviewed_xlsx`), geração do `etl_script.sql` e
+  `detect_pii_by_name`. Para um produto onde o erro custa dado de cidadão, essa é
+  a lacuna silenciosa mais cara que sobrou.
+- ~~**Sem `pyproject.toml`**, sem ruff, sem CI.~~ **Resolvido na Fase 0:**
+  `pyproject.toml` (projeto instalável, ruff + pytest) e `.github/workflows/ci.yml`
+  rodando `ruff check` + `pytest` em push/PR. Ainda falta mypy/pyright e pre-commit.
+- ~~**Sem repositório git inicializado.**~~ **Resolvido na Fase 0:** `main`
+  versionada e sincronizada com `origin`.
+- ~~**Diretório lixo `{config/`**~~ **Resolvido na Fase 0:** removido (continha só
+  diretórios vazios com nomes inválidos).
 - `from rich import print` sombreia o builtin (`app/main.py:11`).
 - Docstrings em português, código em inglês, prompts em português — consistente,
   mas vale registrar como convenção.
@@ -222,7 +230,7 @@ em um cliente de verdade".
 Em fases, cada uma com entregável concreto e critério de pronto. A ordem não é
 por "o que é mais fácil", é por **o que destrava um piloto real**.
 
-### Fase 0 — Higiene (½ dia)
+### Fase 0 — Higiene (½ dia) — ✅ concluída
 
 - `git init` + primeiro commit (sem `.env`, sem `output/*`).
 - Apagar `{config/`.
@@ -230,17 +238,33 @@ por "o que é mais fácil", é por **o que destrava um piloto real**.
 - CI mínimo: `ruff check` + `pytest` em push.
 - **Pronto quando:** `git log` existe, CI verde, `{config/` sumiu.
 
-### Fase 1 — Robustez do LLM (2–3 dias) — destrava C2, A7
+### Fase 1 — Robustez do LLM (2–3 dias) — ✅ concluída — destrava C2, A7
 
-- Saída estruturada nativa em vez de "responda JSON no prompt": tool-use forçado no
-  Anthropic (`tools` + `tool_choice`), `response_format` JSON schema no OpenAI/Ollama.
-- Retry com backoff em erro de parse/validação, com o erro realimentado no prompt
-  (1 retry resolve a maioria dos casos).
-- Chunking do Agente 2: mapear **por tabela de destino** (1 chamada/tabela), não o
-  schema inteiro de uma vez. Elimina o teto de 4096 tokens por construção.
-- Contabilizar tokens e latência por chamada; gravar em `output/<projeto>/run_log.json`.
+Entregue em `app/llm/`:
+
+- **Nenhum provedor obrigatório.** `LLM_BACKEND` escolhe entre `openai`
+  (qualquer endpoint compatível: OpenAI, Ollama, vLLM, LM Studio, OpenRouter),
+  `ollama` (atalho) e `anthropic` (opcional, extra `migra-agent[anthropic]`;
+  o SDK nem é dependência do projeto). O caminho padrão não depende da Anthropic.
+- **Saída estruturada nativa** em vez de "responda JSON no prompt": tool-use
+  forçado no Anthropic, `response_format` com JSON Schema no OpenAI/Ollama, com
+  downgrade automático e memorizado para `json_object` quando o servidor recusa
+  o modo estrito.
+- **Retry com backoff** em erro de parse/validação **e** em erro transitório de
+  transporte (429/5xx), com o erro realimentado no prompt para o modelo corrigir
+  a própria resposta. Erro 4xx "de uso" não é repetido.
+- **Chunking do Agente 2:** mapeamento **por tabela de destino** (1 chamada/tabela),
+  com índice compacto da origem no prompt em vez do `discovery_report` inteiro.
+  Elimina o teto de 4096 tokens por construção.
+- **Garantias determinísticas por cima do modelo:** tabela de destino vem do
+  schema (não do modelo), entrada inventada é descartada com aviso, campo sem
+  resposta vai para `unmapped_target_fields` com warning.
+- **Telemetria:** tokens, latência, tentativa e erro por chamada, gravados em
+  `output/<projeto>/run_log.json` (cumulativo entre fases).
 - **Pronto quando:** mapear um `target_schema` de 10 tabelas completa sem
-  truncamento, e uma falha de parse se recupera sozinha.
+  truncamento, e uma falha de parse se recupera sozinha. — coberto pelos 36
+  testes (`tests/test_llm_client.py`, `test_backend_openai.py`,
+  `test_llm_factory.py`, `test_mapping_agent.py`, `test_orchestrator.py`).
 
 ### Fase 2 — Corretude do ETL (1–2 semanas) — destrava C1, C3, A1, A2, A5
 
@@ -316,8 +340,8 @@ usável".
 
 | Fase | Esforço | Destrava | Se pular |
 |---|---|---|---|
-| 0. Higiene | ½ dia | versionamento, CI | dívida cresce sem histórico |
-| 1. LLM robusto | 2–3 dias | C2, A7 | fase 2 não completa em cliente real |
+| 0. Higiene ✅ | ½ dia | versionamento, CI | dívida cresce sem histórico |
+| 1. LLM robusto ✅ | 2–3 dias | C2, A7 | fase 2 não completa em cliente real |
 | 2. ETL correto | 1–2 semanas | C1, C3, A1, A2, A5 | script parece pronto e corrompe/produz FK errada |
 | 3. Multi-dialeto | 3–5 dias | C5, A3, A4 | só funciona em Firebird, e talvez nem nele |
 | 4. Governança | 3–4 dias | C4 | risco LGPD com dado de cidadão |
@@ -330,10 +354,16 @@ diferença entre um gerador de SQL plausível e um migrador que funciona.
 
 ## 8. Nota sobre o estado do repositório
 
-- Não é um repositório git (`git status` → *not a git repository*).
-- `graphify-out/` presente (grafo de conhecimento gerado por `/graphify`) —
-  artefato de análise, não faz parte do produto; vale ignorar no git.
-- `{config/` é lixo de shell, seguro remover.
-- `output/` só tem `.gitkeep`, nenhuma execução real foi feita ainda — ou seja,
-  **o pipeline nunca rodou de ponta a ponta contra um banco de verdade**. Essa é a
-  lacuna mais honesta deste documento: tudo acima é análise estática.
+> Atualizado depois das Fases 0 e 1. O restante do documento é a análise
+> original e continua válido para as lacunas ainda abertas.
+
+- Repositório git em `main`, sincronizado com `origin`; CI verde
+  (`ruff check` + `pytest`) em cada push.
+- `graphify-out/` está no `.gitignore` — é artefato de análise, não faz parte do
+  produto.
+- `{config/` foi removido.
+- Suíte de testes: 36 testes, todos offline (nenhum fala com LLM ou banco).
+- `output/` só tem `.gitkeep`: **o pipeline nunca rodou de ponta a ponta contra um
+  banco de verdade**. Essa continua sendo a lacuna mais honesta deste documento —
+  tudo acima é análise estática. Fases 2 e 3 são o que destrava o primeiro
+  piloto real.

@@ -22,7 +22,6 @@ dependencies = [
     "fdb==2.0.2",
     "pyodbc==5.1.0",
     "psycopg2-binary==2.9.9",
-    "anthropic==0.39.0",
     "openai==1.54.0",
     "pandas==2.2.3",
     "openpyxl==3.1.5",
@@ -32,6 +31,11 @@ dependencies = [
 dev = [
     "ruff>=0.6",
     "pytest>=8.0",
+]
+# Backend Anthropic é opcional: não é o caminho padrão e não é necessário
+# para rodar o pipeline.
+anthropic = [
+    "anthropic>=0.39",
 ]
 
 [project.scripts]
@@ -44,7 +48,7 @@ exclude = ["tests*", "config*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["app", "tests"]
+src = [".", "tests"]
 extend-exclude = ["graphify-out", "output", ".venv"]
 
 [tool.ruff.lint]

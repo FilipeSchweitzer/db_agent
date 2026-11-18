@@ -25,8 +25,16 @@ def discover(client: str):
 @app.command()
 def map(client: str):
     """Fase 2 — gera o mapeamento proposto e a planilha de revisão."""
-    path = orchestrator.run_mapping(client)
+    total_tables = 0
+
+    def progress(position: int, total: int, table: str) -> None:
+        nonlocal total_tables
+        total_tables = total
+        print(f"[dim]({position}/{total})[/dim] mapeando [bold]{table}[/bold]")
+
+    path = orchestrator.run_mapping(client, on_table=progress)
     print(f"[green]Planilha de revisão gerada:[/green] {path}")
+    print(f"[dim]{total_tables} tabela(s) de destino mapeada(s).[/dim]")
     print("[yellow]Revise a coluna 'status' antes de rodar 'generate'.[/yellow]")
 
 

@@ -40,9 +40,25 @@ class MappingEntry(BaseModel):
     status: ReviewStatus = ReviewStatus.pending_review
 
 
+class TableMapping(BaseModel):
+    """Resposta do Agente 2 para UMA tabela de destino.
+
+    O mapeamento é pedido tabela a tabela porque um schema de destino real
+    tem dezenas de campos: o `MappingDocument` completo não cabe numa única
+    resposta de 4096 tokens, e tentar isso truncava o JSON no meio.
+    """
+
+    entries: list[MappingEntry]
+    unmapped_target_fields: list[str] = []
+
+
 class MappingDocument(BaseModel):
     mapping_id: str
     project: str
     entries: list[MappingEntry]
     unmapped_target_fields: list[str] = []
     unmapped_source_fields: list[str] = []
+    # Ajustes que o pipeline fez por conta própria ao montar o documento
+    # (campo inventado pelo modelo, entrada duplicada, campo sem resposta).
+    # Fica no artefato para o analista ver o que não veio do LLM.
+    warnings: list[str] = []

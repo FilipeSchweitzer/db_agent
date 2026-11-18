@@ -17,7 +17,7 @@ services:
     networks:
       - migra-net
 
-  # Sobe apenas quando LLM_BACKEND=local (perfil "local")
+  # Sobe apenas quando LLM_BACKEND=ollama (perfil "local")
   ollama:
     image: ollama/ollama:latest
     container_name: migra-agent-llm
