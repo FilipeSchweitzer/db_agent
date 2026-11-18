@@ -15,7 +15,9 @@ psycopg2-binary==2.9.9   # PostgreSQL (destino, na maioria dos casos)
 # LLM — o cliente padrão fala a API compatível com OpenAI (OpenAI, Ollama,
 # vLLM, OpenRouter...). O backend Anthropic é opcional e NÃO está aqui:
 #   pip install "migra-agent[anthropic]"
-openai==1.54.0
+# 1.x < 1.55 é incompatível com httpx >= 0.28 (TypeError: proxies), por isso
+# a versão atual.
+openai==3.55.1
 
 # Revisão humana / relatórios
 pandas==2.2.3
