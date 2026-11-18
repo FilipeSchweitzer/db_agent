@@ -19,7 +19,7 @@ def test_build_url_firebird():
         database="/dados/PREFEITURA.FDB", user="SYSDBA", password="masterkey",
     )
     url = build_url(conn)
-    assert url.startswith("firebird+fdb://SYSDBA:masterkey@192.168.1.50:3050")
+    assert url.startswith("firebird+firebird://SYSDBA:masterkey@192.168.1.50:3050")
 
 
 def test_build_url_dialeto_invalido():

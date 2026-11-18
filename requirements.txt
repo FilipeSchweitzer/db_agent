@@ -8,9 +8,11 @@ pyyaml==6.0.2
 
 # Banco de dados
 sqlalchemy==2.0.35
-fdb==2.0.2              # Firebird / Interbase
+sqlalchemy-firebird==2.2.0  # Firebird saiu do core do SQLAlchemy 2.0
+firebird-driver==2.1.2      # DBAPI usado pelo dialeto firebird+firebird
 pyodbc==5.1.0            # SQL Server via ODBC
 psycopg2-binary==2.9.9   # PostgreSQL (destino, na maioria dos casos)
+sqlglot==30.33.0         # transpilação das transformações entre dialetos
 
 # LLM — o cliente padrão fala a API compatível com OpenAI (OpenAI, Ollama,
 # vLLM, OpenRouter...). O backend Anthropic é opcional e NÃO está aqui:

@@ -159,7 +159,8 @@ def test_transformacao_e_renderizada_para_o_dialeto_de_origem(schema, mapping):
     firebird = _plan(mapping, schema, source_dialect="firebird")
     pessoa = next(step for step in firebird.steps if step.table == "pessoa")
     cpf = next(c for c in pessoa.columns if c.target_field == "cpf")
-    assert cpf.source_expr == "REGEXP_REPLACE(s.\"CPF\", '[^0-9]', '')"
+    assert "REPLACE" in cpf.source_expr
+    assert "REGEXP_REPLACE" not in cpf.source_expr
 
 
 def test_map_enum_chega_ao_plano_como_case(schema):

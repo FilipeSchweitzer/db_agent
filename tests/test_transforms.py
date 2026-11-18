@@ -56,13 +56,26 @@ def test_dialeto_sem_template_falha_alto():
 
 
 def test_regex_extract_digits_nao_depende_de_udf_no_firebird():
+    """Firebird 5 não tem REGEXP_REPLACE — cadeia de REPLACE é o que roda."""
     sql = render_sql("regex_extract_digits", "firebird", "s.\"CPF\"")
-    assert sql == "REGEXP_REPLACE(s.\"CPF\", '[^0-9]', '')"
+    assert "REPLACE" in sql
+    assert "REGEXP_REPLACE" not in sql
 
 
 def test_sqlserver_usa_funcao_que_o_script_de_schema_cria():
     sql = render_sql("regex_extract_digits", "sqlserver", "s.[CPF]")
     assert sql == "dbo.fn_strip_nondigits(s.[CPF])"
+
+
+def test_parse_date_br_firebird_monta_data_iso():
+    sql = render_sql("parse_date_br", "firebird", "s.\"DT_NASC\"")
+    assert "SUBSTRING" in sql
+    assert "TO_DATE" not in sql
+
+
+def test_parse_date_br_sqlserver_usa_convert():
+    sql = render_sql("parse_date_br", "sqlserver", "s.[DT_NASC]")
+    assert sql == "CONVERT(date, s.[DT_NASC], 103)"
 
 
 def test_split_nome_completo_foi_removida_do_registro():
@@ -76,6 +89,22 @@ def test_registro_nao_tem_engine_python_ou_python_fn():
 
 
 def test_toda_transformacao_tem_os_tres_dialetos_de_origem():
+    """Cada transformação deve ser renderizável nos 3 dialetos de origem."""
     for name in available_transform_names():
         for dialect in ("postgres", "sqlserver", "firebird"):
-            assert dialect in TRANSFORM_REGISTRY[name].sql_templates, (name, dialect)
+            # Não deve levantar ValueError de dialeto não suportado
+            params = {"mapping": {"a": "b"}} if name == "map_enum" else None
+            sql = render_sql(name, dialect, "col", params)
+            assert isinstance(sql, str) and sql.strip()
+
+
+def test_render_sql_aceita_colunas_citadas():
+    """Coluna já citada (s.\"CPF\") passa direto para o template."""
+    for dialect in ("postgres", "sqlserver", "firebird"):
+        sql = render_sql("regex_extract_digits", dialect, 's."CPF"')
+        assert "CPF" in sql
+
+
+def test_render_sql_falha_em_transformacao_desconhecida():
+    with pytest.raises(ValueError, match="Transformação desconhecida"):
+        render_sql("nao_existe", "postgres", "col")

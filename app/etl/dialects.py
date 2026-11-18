@@ -34,6 +34,16 @@ def _parse_type(type_spec: str | None) -> tuple[str, int | None, int | None]:
     return base, width, scale
 
 
+def _single_line(text: str) -> str:
+    """Achata SQL multilinha para caber dentro de um EXECUTE STATEMENT.
+
+    Firebird não tem `CREATE TABLE IF NOT EXISTS`; o jeito de tornar o script
+    reexecutável é montar o DDL como string dentro de um `EXECUTE BLOCK`, e
+    para isso o corpo precisa estar em uma linha só.
+    """
+    return " ".join(line.strip() for line in text.splitlines() if line.strip())
+
+
 # ----------------------------------------------------------------------
 # Origem (legado): só quoting
 # ----------------------------------------------------------------------
@@ -176,9 +186,14 @@ class Dialect:
                 f"    EXEC('CREATE SEQUENCE {schema + '.' if schema else ''}{sequence} "
                 "AS BIGINT START WITH 1 INCREMENT BY 1');",
             ]
-        # Firebird não tem IF NOT EXISTS para sequence: o script é para rodar
-        # uma vez por banco novo (create_schema) e falha alto se repetido.
-        return [f"CREATE SEQUENCE {ref};"]
+        # Firebird não tem IF NOT EXISTS: o guard vive num EXECUTE BLOCK.
+        return [
+            "EXECUTE BLOCK AS BEGIN",
+            "  IF (NOT EXISTS(SELECT 1 FROM RDB$GENERATORS "
+            f"WHERE RDB$GENERATOR_NAME = '{sequence}')) THEN",
+            f"    EXECUTE STATEMENT 'CREATE SEQUENCE {ref}';",
+            "END;",
+        ]
 
     # ---------------- DDL ----------------
     def create_table(
@@ -197,7 +212,14 @@ class Dialect:
             ]
         if self.name == "postgres":
             return [f"CREATE TABLE IF NOT EXISTS {ref} (\n{body}\n);"]
-        return [f"CREATE TABLE {ref} (\n{body}\n);"]
+        flat_body = _single_line(body).replace("'", "''")
+        return [
+            "EXECUTE BLOCK AS BEGIN",
+            "  IF (NOT EXISTS(SELECT 1 FROM RDB$RELATIONS "
+            f"WHERE RDB$RELATION_NAME = '{table}')) THEN",
+            f"    EXECUTE STATEMENT 'CREATE TABLE {ref} ({flat_body})';",
+            "END;",
+        ]
 
     def primary_key_constraint(self, table: str, column: str) -> str:
         name = self.constraint_name("pk", table, column)

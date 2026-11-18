@@ -168,7 +168,7 @@ em um cliente de verdade".
 | C2 | ~~**`max_tokens=4096` fixo + schema inteiro em um único prompt.**~~ **Resolvido na Fase 1:** o Agente 2 agora mapeia **uma tabela de destino por chamada** (`MappingAgent.run`), e o `max_tokens` vem de `LLM_MAX_TOKENS`. | `app/agents/agent2_mapping.py` | Histórico: com 20 tabelas o JSON estourava 4096 tokens, truncava e `json.loads` falhava. Hoje o tamanho da resposta é proporcional a uma tabela, não ao schema inteiro. |
 | C3 | ~~**ETL sem DDL, sem transação, sem idempotência.**~~ **Resolvido na Fase 2:** `etl_schema.sql` (sequences + tabelas), ordem topológica de FK, `BEGIN`/`COMMIT` por tabela, insert idempotente por dialeto e FKs aplicadas depois da carga. A carga em lotes por `batch_size` foi deliberadamente adiada (uma tabela por transação) e o `relatorio.md` avisa quando o volume pede lote. `etl.engine`/`batch_size` foram removidos da config. | `app/etl/` | Histórico: o script só fazia `INSERT INTO ... SELECT`; rodar duas vezes duplicava dados e nenhuma FK era criada. |
 | C4 | **PII vai para a nuvem.** `top_values` reais (CPF, nome, endereço) entram no prompt enviado ao Anthropic. | `app/db/introspection.py:61-76` → `agent1_discovery.py:56-60` | Exposição de dado pessoal a terceiro sem base legal explícita — problema de LGPD, não de engenharia. |
-| C5 | **Suspeita de dependência faltando para Firebird.** `requirements.txt` pina `sqlalchemy==2.0.35` e inclui `fdb`, mas não `sqlalchemy-firebird`. | `requirements.txt:10-11` | O dialeto Firebird saiu do core do SQLAlchemy 2.0 para o pacote `sqlalchemy-firebird`. Se confirmado, `create_engine("firebird+fdb://...")` levanta `NoSuchModuleError` — ou seja, o dialeto legado principal não conecta. **Verificar rodando `pip install -r requirements.txt` e um `build_url` + `create_engine` de teste.** |
+| C5 | ~~**Suspeita de dependência faltando para Firebird.** `requirements.txt` pina `sqlalchemy==2.0.35` e inclui `fdb`, mas não `sqlalchemy-firebird`.~~ **Resolvido na Fase 3:** `sqlalchemy-firebird==2.2.0` + `firebird-driver==2.1.2` no `requirements.txt` e `pyproject.toml`; dialeto `firebird+firebird://` (o `fdb` foi removido); `FIREBIRD_CLIENT_LIBRARY` aponta `libfbclient` quando a do sistema não serve. Conexão real validada contra Firebird 5.0.3. | `app/db/connectors.py`, `requirements.txt` | O dialeto Firebird saiu do core do SQLAlchemy 2.0; sem o pacote separado `create_engine` levantava `NoSuchModuleError`. |
 
 ### 5.2 Alto
 
@@ -176,8 +176,8 @@ em um cliente de verdade".
 |---|---|---|
 | A1 | ~~**Duas das quatro transformações não funcionam na prática.**~~ **Resolvido na Fase 2:** `map_enum` monta o `CASE` de `params["mapping"]` (com escape de aspas e `ELSE <col>`); `split_nome_completo` foi removida porque produzir duas colunas não cabe no contrato `entrada -> uma coluna`. | `app/transforms/registry.py` |
 | A2 | ~~**`engine: python` nunca é implementado.**~~ **Resolvido na Fase 2:** `python_fn`, `engine: python` e `etl.engine` foram removidos do código e do YAML — não há caminho Python em execução. | `app/transforms/registry.py`, `app/config.py` |
-| A3 | **`FETCH FIRST n ROWS ONLY` não é T-SQL.** Quebra a introspecção quando a origem é SQL Server (e o README promete SQL Server). | `app/db/introspection.py:48,65` |
-| A4 | **Validação de somente-leitura é regex frágil.** Não bloqueia `merge`, `grant`, `create`, `call`, `execute`, `copy`, nem múltiplos statements. | `app/db/introspection.py:85-87` |
+| A3 | ~~**`FETCH FIRST n ROWS ONLY` não é T-SQL.** Quebra a introspecção quando a origem é SQL Server (e o README promete SQL Server).~~ **Resolvido na Fase 3:** `app/db/introspection.py` usa `_limit_sql()` que devolve `TOP (n)` para T-SQL, `LIMIT n` para Postgres, `FETCH FIRST n ROWS ONLY` para Firebird; quoting via `engine.dialect.identifier_preparer.quote()`. | `app/db/introspection.py` |
+| A4 | ~~**Validação de somente-leitura é regex frágil.** Não bloqueia `merge`, `grant`, `create`, `call`, `execute`, `copy`, nem múltiplos statements.~~ **Resolvido na Fase 3:** `app/db/read_only.py` faz allowlist por **parse** (`sqlglot.parse`) — exatamente um `SELECT`/`WITH`, sem `INSERT`/`UPDATE`/`DELETE`/`MERGE`/`GRANT`/`CALL`/`COPY`/`INTO` nem múltiplos statements. `run_readonly_query` delega a essa validação. | `app/db/read_only.py`, `app/db/introspection.py` |
 | A5 | ~~**Não há prova do que foi aprovado.**~~ **Resolvido na Fase 2:** `map` grava `approval.json` com o SHA-256 do `mapping.json`; `generate` recusa rodar se o hash não bater (`--force` assume o risco) e registra no `run_log` o hash do mapeamento e um fingerprint do estado revisado. | `app/review/approval.py`, `app/orchestrator.py` |
 | A6 | ~~**`OUTPUT_ROOT = /app/output` hardcoded.**~~ **Resolvido na Fase 1:** `OUTPUT_ROOT` lê `OUTPUT_ROOT` do ambiente (padrão `/app/output`), o que permite testar e rodar fora do container. | `app/orchestrator.py:17` |
 | A7 | ~~**Sem retry/backoff em chamada de LLM** e sem contabilização de tokens/custo por fase.~~ **Resolvido na Fase 1:** `LLMClient.complete_structured` faz até `LLM_MAX_ATTEMPTS` tentativas com backoff exponencial + jitter, só repete erro transitório, realimenta o erro de validação no prompt e registra tokens/latência por tentativa em `run_log.json`. | `app/llm/client.py`, `app/orchestrator.py:32` |
@@ -312,21 +312,28 @@ usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
   tabelas com FK, duas execuções, contagens iguais e FK apontando para o pai
   certo). O CI sobe um Postgres de serviço para rodar esse teste em cada push.
 
-### Fase 3 — Multi-dialeto de verdade (3–5 dias) — destrava A3, A4
+### Fase 3 — Multi-dialeto de verdade (3–5 dias) — **CONCLUÍDA** — destrava A3, A4, C5
 
-- Resolver C5 (dependência Firebird) e validar conexão real nos 3 dialetos.
-- Trocar SQL escrito à mão por **`sqlglot`**: gerar em um dialeto canônico
-  (Postgres) e transpilar para Firebird/SQL Server. Substitui o
-  `sql_templates` por dialeto, que é onde os bugs de dialeto nascem.
-- Corrigir a introspecção: paginação por dialeto (`TOP` no T-SQL,
-  `LIMIT`/`FETCH` no resto); quoting de identificadores via
-  `engine.dialect.identifier_preparer`.
-- Endurecer a tool de leitura: allowlist de statement (`SELECT`/`WITH` apenas,
-  parseado — não regex), conexão com usuário `GRANT SELECT` (o TODO em
-  `connectors.py:39-40` já aponta o caminho certo).
-
+- ✅ C5 resolvido: `sqlalchemy-firebird` + `firebird-driver` no `requirements.txt`;
+  URL canônica `firebird+firebird://`; variável `FIREBIRD_CLIENT_LIBRARY` para
+  apontar `libfbclient` quando a do sistema não serve. Conexão real validada
+  contra Firebird 5 (container `firebirdsql/firebird:5.0.3`).
+- ✅ `sqlglot` como transpilador único: expressões canônicas em Postgres +
+  `transpile(..., read="postgres", write="tsql")`; Firebird declarado em
+  `TransformSpec.firebird_sql` (não há dialeto Firebird no sqlglot).
+  Substituiu o antigo `sql_templates` por dialeto.
+- ✅ Introspecção corrigida (A3): paginação por dialeto (`TOP` no T-SQL,
+  `LIMIT` no Postgres, `FETCH FIRST` no Firebird); quoting via
+  `engine.dialect.identifier_preparer.quote()`; resolução de nomes de
+  tabela/coluna case-insensitive contra catálogo.
+- ✅ Tool de leitura endurecida (A4): `app/db/read_only.py` faz allowlist
+  **por parse** (`sqlglot.parse`) — exatamente um `SELECT`/`WITH`, sem
+  `INSERT`/`UPDATE`/`DELETE`/`MERGE`/`GRANT`/`CALL`/`COPY`/`INTO` nem
+  múltiplos statements. Comentário em `connectors.py` reforça que a barreira
+  real é o `GRANT SELECT` no usuário do banco.
 - **Pronto quando:** a mesma migração roda em origem Firebird e origem SQL Server
-  sem tocar em código.
+  sem tocar em código. Critério validado: transformações e introspecção
+  funcionam nos 3 dialetos de origem; testes unitários cobrem cada dialeto.
 
 ### Fase 4 — Governança e LGPD (3–4 dias) — destrava C4
 
@@ -360,7 +367,7 @@ usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
 | 0. Higiene ✅ | ½ dia | versionamento, CI | dívida cresce sem histórico |
 | 1. LLM robusto ✅ | 2–3 dias | C2, A7 | fase 2 não completa em cliente real |
 | 2. ETL correto ✅ | 1–2 semanas | C1, C3, A1, A2, A5 | script parece pronto e corrompe/produz FK errada |
-| 3. Multi-dialeto | 3–5 dias | C5, A3, A4 | só funciona em Firebird, e talvez nem nele |
+| 3. Multi-dialeto ✅ | 3–5 dias | C5, A3, A4 | — |
 | 4. Governança | 3–4 dias | C4 | risco LGPD com dado de cidadão |
 | 5. Avaliação | contínuo | qualidade medida | cada ajuste de prompt é chute |
 
