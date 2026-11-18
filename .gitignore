@@ -5,5 +5,10 @@ output/*
 !output/.gitkeep
 .venv/
 
+# build / instalação do pacote
+*.egg-info/
+build/
+dist/
+
 # artefatos de análise gerados (grafo de conhecimento)
 graphify-out/

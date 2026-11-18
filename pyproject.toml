@@ -1,0 +1,59 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "migra-agent"
+version = "0.1.0"
+description = "Pipeline de IA para análise de bancos legados e geração assistida de scripts de migração."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "Filipe Schweitzer" }]
+
+# As mesmas versões de requirements.txt, que continua sendo o que o Dockerfile
+# instala. Mantenha as duas listas em sincronia ao subir/baixar dependência.
+dependencies = [
+    "typer==0.12.5",
+    "rich==13.9.2",
+    "pydantic==2.9.2",
+    "pyyaml==6.0.2",
+    "sqlalchemy==2.0.35",
+    "fdb==2.0.2",
+    "pyodbc==5.1.0",
+    "psycopg2-binary==2.9.9",
+    "anthropic==0.39.0",
+    "openai==1.54.0",
+    "pandas==2.2.3",
+    "openpyxl==3.1.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8.0",
+]
+
+[project.scripts]
+migra-agent = "app.main:app"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["tests*", "config*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["app", "tests"]
+extend-exclude = ["graphify-out", "output", ".venv"]
+
+[tool.ruff.lint]
+# E/F: erro e pyflakes — o mínimo que pega bug de verdade.
+# I: ordem de import. UP: sintaxe moderna de Python. B: armadilhas comuns.
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q --strict-markers"
