@@ -142,3 +142,54 @@ def test_progresso_e_reportado_por_tabela():
     )
 
     assert vistos == [(1, 2, "pessoa"), (2, 2, "bairro")]
+
+
+def test_schema_de_dez_tabelas_nao_trunca():
+    """Critério de pronto da Fase 1: 10 tabelas completam sem estouro de contexto.
+
+    Cada resposta roteirizada tem o tamanho de UMA tabela — que é o ponto do
+    chunking: o schema cresce, o payload de cada chamada não.
+    """
+    nomes = [f"tabela_{indice}" for indice in range(10)]
+    schema = TargetSchema(
+        version="teste",
+        tables={
+            nome: TargetTable(
+                fields={
+                    "id": TargetField(type="integer", primary_key=True, required=True),
+                    "nome": TargetField(type="string", required=True),
+                    "valor": TargetField(type="integer", required=False),
+                }
+            )
+            for nome in nomes
+        },
+    )
+    respostas = [
+        json.dumps(
+            {
+                "entries": [
+                    {
+                        **_entrada(campo),
+                        "target_table": nome,
+                        "source_field": "CPF_LEG",
+                    }
+                    for campo in ("id", "nome", "valor")
+                ],
+                "unmapped_target_fields": [],
+            }
+        )
+        for nome in nomes
+    ]
+
+    client = ScriptedClient(respostas)
+
+    mapping = MappingAgent(client).run("demo", _discovery(), schema)
+
+    assert len(client.calls) == 10
+    assert all(call.ok for call in client.calls)
+    assert len(mapping.entries) == 30
+    assert mapping.unmapped_target_fields == []
+    assert mapping.warnings == []
+    # O prompt de cada chamada fala de uma tabela só.
+    assert "Tabela de destino: tabela_3" in client.prompts[3]
+    assert "tabela_4" not in client.prompts[3]
