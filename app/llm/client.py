@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Type, TypeVar
+from typing import TypeVar
 
 from pydantic import BaseModel
 
@@ -15,7 +15,7 @@ class LLMClient(ABC):
         self,
         system_prompt: str,
         user_prompt: str,
-        response_model: Type[T],
+        response_model: type[T],
     ) -> T:
         """Chama o modelo e retorna a resposta já validada contra response_model.
 

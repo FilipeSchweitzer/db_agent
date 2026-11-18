@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from app.agents.agent1_discovery import DiscoveryAgent
 from app.agents.agent2_mapping import MappingAgent
 from app.agents.agent3_etl import ETLAgent
-from app.config import ProjectConfig, load_project_config
+from app.config import load_project_config
 from app.db.connectors import get_engine
 from app.llm import get_llm_client
 from app.review.export import export_to_xlsx, load_reviewed_xlsx

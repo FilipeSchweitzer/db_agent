@@ -1,3 +1,4 @@
+import pytest
 from app.config import DBConnection
 from app.db.connectors import build_url
 
@@ -24,8 +25,5 @@ def test_build_url_dialeto_invalido():
     conn = DBConnection(
         dialect="oracle", host="h", port=1, database="d", user="u", password="p",
     )
-    try:
+    with pytest.raises(ValueError):
         build_url(conn)
-        assert False, "deveria ter levantado ValueError"
-    except ValueError:
-        pass

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Type, TypeVar
+from typing import TypeVar
 
 import anthropic
 from pydantic import BaseModel
@@ -18,7 +18,7 @@ class AnthropicBackend(LLMClient):
         self.model = model
 
     def complete_structured(
-        self, system_prompt: str, user_prompt: str, response_model: Type[T]
+        self, system_prompt: str, user_prompt: str, response_model: type[T]
     ) -> T:
         schema_hint = (
             f"\n\nResponda APENAS com um JSON válido no seguinte formato "

@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 
 from app.db import introspection as tools
 from app.llm.client import LLMClient
-from app.schemas.profiling import ColumnProfile, DiscoveryReport, TableProfile
+from app.schemas.profiling import DiscoveryReport, TableProfile
 
 SYSTEM_PROMPT = """\
 Você é um engenheiro de dados especialista em bancos legados de sistemas

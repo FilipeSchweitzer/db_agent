@@ -26,6 +26,6 @@ class TargetSchema(BaseModel):
     tables: dict[str, TargetTable]
 
     @classmethod
-    def load(cls, path: Path) -> "TargetSchema":
+    def load(cls, path: Path) -> TargetSchema:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         return cls(**data)

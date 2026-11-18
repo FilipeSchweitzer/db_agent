@@ -5,19 +5,19 @@ o Agente 3. O enum `status` é o que dá o controle do checkpoint humano.
 """
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
 
-class ReviewStatus(str, Enum):
+class ReviewStatus(StrEnum):
     pending_review = "pending_review"
     approved = "approved"
     edited = "edited"
     rejected = "rejected"
 
 
-class Confidence(str, Enum):
+class Confidence(StrEnum):
     high = "high"
     medium = "medium"
     low = "low"
