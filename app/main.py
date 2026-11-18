@@ -4,6 +4,7 @@
     docker compose exec app python -m app.main map example-client
     # -> revisar e salvar output/example-client/mapeamento_para_revisao.xlsx
     docker compose exec app python -m app.main generate example-client
+    docker compose exec app python -m app.main generate example-client --dry-run
 """
 from __future__ import annotations
 
@@ -39,10 +40,28 @@ def map(client: str):
 
 
 @app.command()
-def generate(client: str):
-    """Fase 3 — gera o script de ETL a partir do mapeamento APROVADO."""
-    path = orchestrator.run_etl_generation(client)
-    print(f"[green]Script de ETL gerado:[/green] {path}")
+def generate(
+    client: str,
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Só valida o mapeamento e mostra o plano; não escreve script executável.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Gera mesmo se o mapping.json não bater com o que foi revisado.",
+    ),
+):
+    """Fase 3 — gera os artefatos de migração a partir do mapeamento APROVADO."""
+    path = orchestrator.run_etl_generation(client, dry_run=dry_run, force=force)
+    if dry_run:
+        print(f"[green]Plano validado:[/green] {path}")
+        print("[yellow]Nada foi executado nem gerado além do plano.[/yellow]")
+        return
+    print(f"[green]Artefatos gerados em[/green] {path.parent}")
+    print("[dim]Ordem: etl_schema.sql -> etl_script.sql -> etl_constraints.sql "
+          "-> etl_validation.sql[/dim]")
 
 
 if __name__ == "__main__":

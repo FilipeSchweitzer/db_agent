@@ -106,9 +106,12 @@ CLI (typer)                    app/main.py
    cliente novo = criar uma pasta.
 2. **Lista fechada de transformações.** O Agente 2 não escreve lógica livre — ele
    escolhe um nome de `TRANSFORM_REGISTRY` (`regex_extract_digits`,
-   `parse_date_br`, `map_enum`, `split_nome_completo`). Se nenhuma serve, o campo
-   é marcado para revisão em vez de o modelo inventar algo ad-hoc. Isso troca
-   cobertura por previsibilidade — uma troca correta para dados de cidadão.
+   `parse_date_br`, `map_enum`) e, no caso de `map_enum`, fornece o mapa de
+   valores em `params`. Cada transformação é uma expressão de **uma coluna**, por
+   dialeto; o que não cabe nisso (separar nome em duas colunas) fica fora até
+   existir suporte a múltiplos alvos. Se nenhuma serve, o campo é marcado para
+   revisão em vez de o modelo inventar algo ad-hoc. Isso troca cobertura por
+   previsibilidade — uma troca correta para dados de cidadão.
 3. **Interface de LLM trocável.** Os agentes só conhecem `LLMClient.complete_structured()`
    (`app/llm/client.py`). Todo backend que fala a API OpenAI (OpenAI, Ollama, vLLM,
    OpenRouter) usa `backend_openai.py`; o Anthropic é um extra opcional. Nenhum
@@ -161,9 +164,9 @@ em um cliente de verdade".
 
 | # | Lacuna | Onde | Por que importa |
 |---|---|---|---|
-| C1 | **Chave substituta (surrogate key) não é tratada.** `references: bairro.id` é declarado no target schema mas **nunca lido por nenhum código**. | `app/schemas/target_schema.py:17` | É *o* problema de migração real: `pessoa.cod_bairro` no legado referencia o código antigo, mas `bairro.id` no destino é `SERIAL`. Sem uma tabela de-para de chaves, todo INSERT com FK quebra ou aponta para o registro errado. |
+| C1 | ~~**Chave substituta (surrogate key) não é tratada.**~~ **Resolvido na Fase 2:** `references` agora é lido por `TargetSchema.references()`; `app/etl/plan.py` cria `_map_<tabela>(old_key, new_id)` e a carga faz `JOIN` nele para PK e FK. | `app/schemas/target_schema.py`, `app/etl/plan.py` | Histórico: `pessoa.cod_bairro` no legado referenciava o código antigo, mas `bairro.id` no destino é gerado — sem de-para, o INSERT quebrava ou apontava para o registro errado. |
 | C2 | ~~**`max_tokens=4096` fixo + schema inteiro em um único prompt.**~~ **Resolvido na Fase 1:** o Agente 2 agora mapeia **uma tabela de destino por chamada** (`MappingAgent.run`), e o `max_tokens` vem de `LLM_MAX_TOKENS`. | `app/agents/agent2_mapping.py` | Histórico: com 20 tabelas o JSON estourava 4096 tokens, truncava e `json.loads` falhava. Hoje o tamanho da resposta é proporcional a uma tabela, não ao schema inteiro. |
-| C3 | **ETL sem DDL, sem lote, sem transação, sem idempotência.** Gera só `INSERT INTO ... SELECT`; `batch_size` e `etl.engine` são config morta. | `app/agents/agent3_etl.py:41-72` | Rodar o script duas vezes duplica os dados. Não cria tabelas/sequences/FKs no destino. Não ordena por dependência de FK. Não tem `BEGIN`/`COMMIT`/rollback. |
+| C3 | ~~**ETL sem DDL, sem transação, sem idempotência.**~~ **Resolvido na Fase 2:** `etl_schema.sql` (sequences + tabelas), ordem topológica de FK, `BEGIN`/`COMMIT` por tabela, insert idempotente por dialeto e FKs aplicadas depois da carga. A carga em lotes por `batch_size` foi deliberadamente adiada (uma tabela por transação) e o `relatorio.md` avisa quando o volume pede lote. `etl.engine`/`batch_size` foram removidos da config. | `app/etl/` | Histórico: o script só fazia `INSERT INTO ... SELECT`; rodar duas vezes duplicava dados e nenhuma FK era criada. |
 | C4 | **PII vai para a nuvem.** `top_values` reais (CPF, nome, endereço) entram no prompt enviado ao Anthropic. | `app/db/introspection.py:61-76` → `agent1_discovery.py:56-60` | Exposição de dado pessoal a terceiro sem base legal explícita — problema de LGPD, não de engenharia. |
 | C5 | **Suspeita de dependência faltando para Firebird.** `requirements.txt` pina `sqlalchemy==2.0.35` e inclui `fdb`, mas não `sqlalchemy-firebird`. | `requirements.txt:10-11` | O dialeto Firebird saiu do core do SQLAlchemy 2.0 para o pacote `sqlalchemy-firebird`. Se confirmado, `create_engine("firebird+fdb://...")` levanta `NoSuchModuleError` — ou seja, o dialeto legado principal não conecta. **Verificar rodando `pip install -r requirements.txt` e um `build_url` + `create_engine` de teste.** |
 
@@ -171,11 +174,11 @@ em um cliente de verdade".
 
 | # | Lacuna | Onde |
 |---|---|---|
-| A1 | **Duas das quatro transformações não funcionam na prática.** `split_nome_completo` tem `sql_templates={}` → `render_sql` levanta `ValueError`. `map_enum` exige `when_clauses`, que ninguém constrói a partir de `params["mapping"]` → `KeyError`. | `app/transforms/registry.py:52-65,73-80` |
-| A2 | **`engine: python` nunca é implementado.** `python_fn` existe em todas as specs mas não há um único chamador. O Agente 3 sempre renderiza SQL. | `registry.py:19`, `agent3_etl.py:44-53` |
+| A1 | ~~**Duas das quatro transformações não funcionam na prática.**~~ **Resolvido na Fase 2:** `map_enum` monta o `CASE` de `params["mapping"]` (com escape de aspas e `ELSE <col>`); `split_nome_completo` foi removida porque produzir duas colunas não cabe no contrato `entrada -> uma coluna`. | `app/transforms/registry.py` |
+| A2 | ~~**`engine: python` nunca é implementado.**~~ **Resolvido na Fase 2:** `python_fn`, `engine: python` e `etl.engine` foram removidos do código e do YAML — não há caminho Python em execução. | `app/transforms/registry.py`, `app/config.py` |
 | A3 | **`FETCH FIRST n ROWS ONLY` não é T-SQL.** Quebra a introspecção quando a origem é SQL Server (e o README promete SQL Server). | `app/db/introspection.py:48,65` |
 | A4 | **Validação de somente-leitura é regex frágil.** Não bloqueia `merge`, `grant`, `create`, `call`, `execute`, `copy`, nem múltiplos statements. | `app/db/introspection.py:85-87` |
-| A5 | **Não há prova do que foi aprovado.** O `generate` relê `mapping.json` (não a planilha) e aplica os status por cima. Se `mapping.json` for regerado entre a revisão e o `generate`, o script sai de um mapeamento diferente do revisado — sem aviso. Falta hash/assinatura do par (mapping + planilha). | `app/orchestrator.py:63-67` |
+| A5 | ~~**Não há prova do que foi aprovado.**~~ **Resolvido na Fase 2:** `map` grava `approval.json` com o SHA-256 do `mapping.json`; `generate` recusa rodar se o hash não bater (`--force` assume o risco) e registra no `run_log` o hash do mapeamento e um fingerprint do estado revisado. | `app/review/approval.py`, `app/orchestrator.py` |
 | A6 | ~~**`OUTPUT_ROOT = /app/output` hardcoded.**~~ **Resolvido na Fase 1:** `OUTPUT_ROOT` lê `OUTPUT_ROOT` do ambiente (padrão `/app/output`), o que permite testar e rodar fora do container. | `app/orchestrator.py:17` |
 | A7 | ~~**Sem retry/backoff em chamada de LLM** e sem contabilização de tokens/custo por fase.~~ **Resolvido na Fase 1:** `LLMClient.complete_structured` faz até `LLM_MAX_ATTEMPTS` tentativas com backoff exponencial + jitter, só repete erro transitório, realimenta o erro de validação no prompt e registra tokens/latência por tentativa em `run_log.json`. | `app/llm/client.py`, `app/orchestrator.py:32` |
 | A8 | **`load_reviewed_xlsx` descarta linhas desconhecidas em silêncio** e explode com `ValueError` cru se o analista digitar um `status` inválido na planilha. | `app/review/export.py:44-48,67` |
@@ -201,17 +204,15 @@ em um cliente de verdade".
 - **Identificadores SQL interpolados sem quoting** em `sample_rows`,
   `profile_column` (`introspection.py:44-67`). Hoje os nomes vêm do `inspect()`,
   não do LLM, então o risco é baixo — mas não há defesa em profundidade.
-- **Diretório lixo `{config/`** na raiz (3 níveis de pastas com nomes tipo
-  `example-client,app/llm,app`), resquício de uma expansão de shell quebrada.
 
 ### 5.4 Baixo (mas cobra juros)
 
-- **Cobertura de teste ainda curta.** A Fase 1 levou a suíte de 3 para 36 testes
-  (cliente de LLM, retry, seleção de backend, schema estrito, chunking do Agente 2,
-  `run_log`), mas continuam sem teste: `render_sql`, round-trip Excel
-  (`export_to_xlsx` → `load_reviewed_xlsx`), geração do `etl_script.sql` e
-  `detect_pii_by_name`. Para um produto onde o erro custa dado de cidadão, essa é
-  a lacuna silenciosa mais cara que sobrou.
+- **Cobertura de teste.** A Fase 2 levou a suíte de 36 para 144 testes e fechou
+  as lacunas apontadas antes: `render_sql`, grafo de dependência, plano, geração
+  de SQL por dialeto, dry-run, `approval`, round-trip Excel
+  (`export_to_xlsx` → `load_reviewed_xlsx`, incluindo status inválido e linha
+  removida), `run_log` do `generate` e um teste de integração contra Postgres
+  real (marcado `integration`). Continua sem teste `detect_pii_by_name`.
 - ~~**Sem `pyproject.toml`**, sem ruff, sem CI.~~ **Resolvido na Fase 0:**
   `pyproject.toml` (projeto instalável, ruff + pytest) e `.github/workflows/ci.yml`
   rodando `ruff check` + `pytest` em push/PR. Ainda falta mypy/pyright e pre-commit.
@@ -266,34 +267,50 @@ Entregue em `app/llm/`:
   testes (`tests/test_llm_client.py`, `test_backend_openai.py`,
   `test_llm_factory.py`, `test_mapping_agent.py`, `test_orchestrator.py`).
 
-### Fase 2 — Corretude do ETL (1–2 semanas) — destrava C1, C3, A1, A2, A5
+### Fase 2 — Corretude do ETL (1–2 semanas) — ✅ concluída — destrava C1, C3, A1, A2, A5
 
-Esta é a fase que transforma o projeto de "demo convincente" em "ferramenta
-usável".
+O objetivo era transformar o projeto de "demo convincente" em "ferramenta
+usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
 
-1. **Tabela de-para de chaves (C1).** Para cada relação `references: tabela.col`,
-   gerar um passo de staging que cria `_map_<tabela>(old_id, new_id)` e um
-   `UPDATE`/`JOIN` que traduz a FK antes do INSERT. Sem isso, migração com
-   relacionamento simplesmente não fecha.
-2. **DDL + ordem de dependência (C3).** Gerar `CREATE TABLE`/sequences a partir do
-   `target_schema.yaml` ou, melhor, validar contra o schema já existente; ordenar
-   os INSERTs por grafo de FK (topological sort).
-3. **Transação + lote.** `BEGIN`/`COMMIT` por tabela, `batch_size` respeitado,
-   idempotência (`ON CONFLICT DO NOTHING` no Postgres / `MERGE` no SQL Server /
-   `UPDATE OR INSERT` no Firebird) — escolhido por dialeto.
-4. **Dry-run + validação pós-carga.** `--dry-run` que só conta linhas por tabela;
-   depois da carga, comparar contagem origem vs. destino e emitir divergências em
-   `validacao.md`.
-5. **Consertar as transformações (A1/A2):** implementar `map_enum` montando
-   `when_clauses` a partir de `params["mapping"]`; dar template SQL para
-   `split_nome_completo` (ou removê-la do registry e documentar que só existe em
-   Python); implementar o renderizador Python de fato, ou **remover** `engine:
-   python` e `python_fn` do código e do YAML até existir.
-6. **Hash de aprovação (A5):** gravar SHA-256 de `mapping.json` + planilha no
-   momento da revisão; `generate` recusa rodar se não bater.
+1. **Tabela de-para de chaves (C1).** `app/schemas/target_schema.py` passou a
+   ler `references` e a expor `dependency_order()`, `fk_targets()` e o grafo de
+   FK (com detecção de ciclo). Para cada tabela cuja PK é gerada por sequence,
+   o plano cria `_map_<tabela>(old_key, new_id)` e a carga faz `JOIN` nesse mapa
+   — tanto para a PK quanto para cada FK entre tabelas migradas. FK apontando
+   para tabela não migrada (ou cuja PK não tem origem aprovada) **falha a
+   geração** em vez de copiar a chave antiga; `etl.allow_unresolved_fks: true`
+   aceita o risco explicitamente.
+2. **DDL + ordem de dependência (C3).** `etl_schema.sql` gera sequences e
+   `CREATE TABLE` a partir do `target_schema.yaml`, com `pk_strategy`
+   `sequence`/`preserve` por tabela. Os INSERTs seguem a ordem topológica do
+   grafo de FK — ciclo falha na geração, com o caminho do ciclo na mensagem.
+3. **Transação + idempotência.** `BEGIN`/`COMMIT` por tabela; insert idempotente
+   por dialeto (`ON CONFLICT DO NOTHING` no Postgres, `WHERE NOT EXISTS` no SQL
+   Server, `UPDATE OR INSERT` no Firebird). O de-para preserva a chave nova
+   entre execuções, então rodar duas vezes não duplica e não remapeia. As
+   constraints de FK são aplicadas **depois** da carga e com guarda de
+   reexecução.
+4. **Dry-run + validação pós-carga.** `generate --dry-run` escreve só
+   `etl_plan.json` (o que migra, em que ordem, com qual chave) e nada
+   executável. `etl_validation.sql` compara contagem origem x destino por
+   tabela, conta órfãos de FK e aponta linha de de-para não consumida.
+   `relatorio.md` traz a ordem de execução, pendências e avisos.
+5. **Transformações consertadas (A1/A2).** `map_enum` monta o `CASE` a partir de
+   `params["mapping"]`, com escape de aspas e `ELSE <col>` (valor desconhecido
+   não vira NULL). `split_nome_completo` foi **removida**: produzir duas colunas
+   não cabe no contrato `entrada -> uma coluna`. `engine: python`, `python_fn` e
+   `etl.engine`/`batch_size` foram removidos do código e do YAML.
+6. **Hash de aprovação (A5).** `map` grava `approval.json` com o SHA-256 do
+   `mapping.json`, a versão do target schema e a contagem de entradas.
+   `generate` recusa rodar se o hash não bater (`--force` para assumir);
+   `run_log.json` registra o hash do mapeamento e um fingerprint do estado
+   revisado.
 
 - **Pronto quando:** um cliente com 3 tabelas relacionadas migra, roda duas vezes
-  seguidas sem duplicar, e a contagem bate.
+  seguidas sem duplicar, e a contagem bate. — provado contra Postgres 16 real
+  em `tests/test_integration_postgres.py` (schema `legado` -> `destino`, 3
+  tabelas com FK, duas execuções, contagens iguais e FK apontando para o pai
+  certo). O CI sobe um Postgres de serviço para rodar esse teste em cada push.
 
 ### Fase 3 — Multi-dialeto de verdade (3–5 dias) — destrava A3, A4
 
@@ -342,7 +359,7 @@ usável".
 |---|---|---|---|
 | 0. Higiene ✅ | ½ dia | versionamento, CI | dívida cresce sem histórico |
 | 1. LLM robusto ✅ | 2–3 dias | C2, A7 | fase 2 não completa em cliente real |
-| 2. ETL correto | 1–2 semanas | C1, C3, A1, A2, A5 | script parece pronto e corrompe/produz FK errada |
+| 2. ETL correto ✅ | 1–2 semanas | C1, C3, A1, A2, A5 | script parece pronto e corrompe/produz FK errada |
 | 3. Multi-dialeto | 3–5 dias | C5, A3, A4 | só funciona em Firebird, e talvez nem nele |
 | 4. Governança | 3–4 dias | C4 | risco LGPD com dado de cidadão |
 | 5. Avaliação | contínuo | qualidade medida | cada ajuste de prompt é chute |
@@ -354,7 +371,7 @@ diferença entre um gerador de SQL plausível e um migrador que funciona.
 
 ## 8. Nota sobre o estado do repositório
 
-> Atualizado depois das Fases 0 e 1. O restante do documento é a análise
+> Atualizado depois das Fases 0, 1 e 2. O restante do documento é a análise
 > original e continua válido para as lacunas ainda abertas.
 
 - Repositório git em `main`, sincronizado com `origin`; CI verde
@@ -362,8 +379,16 @@ diferença entre um gerador de SQL plausível e um migrador que funciona.
 - `graphify-out/` está no `.gitignore` — é artefato de análise, não faz parte do
   produto.
 - `{config/` foi removido.
-- Suíte de testes: 36 testes, todos offline (nenhum fala com LLM ou banco).
-- `output/` só tem `.gitkeep`: **o pipeline nunca rodou de ponta a ponta contra um
-  banco de verdade**. Essa continua sendo a lacuna mais honesta deste documento —
-  tudo acima é análise estática. Fases 2 e 3 são o que destrava o primeiro
-  piloto real.
+- Suíte de testes: 144 testes. A maioria é offline; os de integração (marcados
+  `integration`) rodam contra Postgres 16 real e são pulados quando
+  `MIGRA_TEST_POSTGRES_DSN` não está definido.
+- **O pipeline já rodou de ponta a ponta contra Postgres 16**: `discover` não
+  (exige LLM), mas `map`-artefatos -> revisão da planilha -> `generate` ->
+  execução dos quatro scripts -> validação foi exercitado com dados reais em
+  schema `legado`, e está coberto por teste automatizado no CI.
+- Lacunas honestas que restam: `discover`/`map` só foram validados com LLM
+  simulado (nenhum teste bate na API de um provedor de verdade); a carga em
+  lote por `batch_size` não existe — o script faz uma transação por tabela, o
+  que é adequado até dezenas de milhares de linhas e foi sinalizado como Fase
+  2b no relatório gerado; e a validação Firebird/SQL Server não foi executada
+  contra servidor real (só Postgres).

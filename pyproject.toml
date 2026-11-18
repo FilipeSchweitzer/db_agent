@@ -61,3 +61,8 @@ minversion = "8.0"
 testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-q --strict-markers"
+# Testes marcados `integration` precisam de um serviço externo (Postgres) e
+# são pulados quando a variável de conexão não existe.
+markers = [
+    "integration: exige um Postgres real via MIGRA_TEST_POSTGRES_DSN",
+]

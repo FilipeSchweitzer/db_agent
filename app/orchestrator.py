@@ -14,6 +14,7 @@ from app.config import load_project_config
 from app.db.connectors import get_engine
 from app.llm import get_llm_client
 from app.llm.client import LLMClient
+from app.review.approval import review_fingerprint, verify_approval, write_approval
 from app.review.export import export_to_xlsx, load_reviewed_xlsx
 from app.schemas.mapping import MappingDocument, ReviewStatus
 from app.schemas.profiling import DiscoveryReport
@@ -96,11 +97,22 @@ def run_mapping(client_name: str, on_table: ProgressCallback | None = None) -> P
         cfg.project, discovery, target_schema, on_table=on_table
     )
 
-    mapping_json = _output_dir(cfg.project) / "mapping.json"
+    out_dir = _output_dir(cfg.project)
+    mapping_json = out_dir / "mapping.json"
     mapping_json.write_text(mapping.model_dump_json(indent=2), encoding="utf-8")
 
-    review_xlsx = _output_dir(cfg.project) / "mapeamento_para_revisao.xlsx"
+    review_xlsx = out_dir / "mapeamento_para_revisao.xlsx"
     export_to_xlsx(mapping, review_xlsx)
+
+    # Prova de que o mapping.json revisado é este, e não um regenerado depois.
+    write_approval(
+        out_dir,
+        project=cfg.project,
+        mapping_id=mapping.mapping_id,
+        target_schema_version=target_schema.version,
+        entries=len(mapping.entries),
+    )
+
     _record_run(
         cfg.project,
         "mapping",
@@ -115,36 +127,79 @@ def run_mapping(client_name: str, on_table: ProgressCallback | None = None) -> P
     return review_xlsx
 
 
-def run_etl_generation(client_name: str) -> Path:
+def run_etl_generation(
+    client_name: str,
+    *,
+    dry_run: bool = False,
+    force: bool = False,
+) -> Path:
     """Só deve ser chamado depois que o analista revisou e salvou a planilha
     (mapeamento_para_revisao.xlsx) com a coluna `status` atualizada."""
     cfg = load_project_config(client_name)
     started = time.perf_counter()
-
     out_dir = _output_dir(cfg.project)
-    mapping_json = out_dir / "mapping.json"
-    mapping = MappingDocument.model_validate_json(mapping_json.read_text())
 
-    reviewed_xlsx = out_dir / "mapeamento_para_revisao.xlsx"
-    mapping = load_reviewed_xlsx(mapping, reviewed_xlsx)
+    approval = {} if force else verify_approval(out_dir)
 
-    ETLAgent().run(
+    mapping = MappingDocument.model_validate_json((out_dir / "mapping.json").read_text())
+    mapping = load_reviewed_xlsx(mapping, out_dir / "mapeamento_para_revisao.xlsx")
+    target_schema = TargetSchema.load(cfg.target_schema_path)
+
+    result = ETLAgent().run(
         mapping,
+        target_schema=target_schema,
         source_dialect=cfg.source.dialect,
         target_dialect=cfg.target.dialect,
         output_dir=out_dir,
+        source_schema=cfg.source.schema_name,
+        target_schema_name=cfg.target.schema_name,
+        discovery=_load_discovery(out_dir),
+        etl=cfg.etl,
+        dry_run=dry_run,
     )
+
+    fingerprint = review_fingerprint(mapping)
+    if not dry_run:
+        _append_audit(out_dir / "relatorio.md", approval, fingerprint)
+
     _record_run(
         cfg.project,
         "generate",
         None,
         started,
-        artifact="etl_script.sql",
-        entries=len(mapping.entries),
+        dry_run=dry_run,
+        entries=result.plan.entry_count,
         approved=sum(
             1
             for entry in mapping.entries
             if entry.status in (ReviewStatus.approved, ReviewStatus.edited)
         ),
+        tables=[step.table for step in result.plan.steps],
+        skipped=len(result.plan.skipped),
+        warnings=len(result.plan.warnings),
+        mapping_sha256=approval.get("mapping_sha256"),
+        review_sha256=fingerprint,
+        artifacts=sorted(path.name for path in result.written.values()),
     )
-    return out_dir / "etl_script.sql"
+
+    return result.written["etl_plan.json"] if dry_run else out_dir / "etl_script.sql"
+
+
+def _load_discovery(out_dir: Path) -> DiscoveryReport | None:
+    path = out_dir / "discovery_report.json"
+    if not path.exists():
+        return None
+    return DiscoveryReport.model_validate_json(path.read_text())
+
+
+def _append_audit(report: Path, approval: dict, fingerprint: str) -> None:
+    lines = [
+        "",
+        "## Auditoria",
+        "",
+        f"- `mapping.json` (sha256): `{approval.get('mapping_sha256', 'não verificado')}`",
+        f"- estado revisado (sha256): `{fingerprint}`",
+        f"- target schema: `{approval.get('target_schema_version', 'desconhecida')}`",
+    ]
+    with report.open("a", encoding="utf-8") as handle:
+        handle.write("\n".join(lines) + "\n")

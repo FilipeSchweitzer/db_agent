@@ -8,6 +8,7 @@ source:
   port: 3050
   database: /dados/PREFEITURA.FDB
   user: SYSDBA
+  schema_name:                 # vazio = sem qualificação
   # senha fica em variável de ambiente, nunca aqui: SOURCE_DB_PASSWORD
 
 target:
@@ -16,6 +17,7 @@ target:
   port: 5432
   database: gestao_municipal
   user: migrador
+  schema_name: public
   # senha em variável de ambiente: TARGET_DB_PASSWORD
 
 target_schema_file: target_schema.yaml   # relativo a esta mesma pasta
@@ -24,5 +26,25 @@ target_schema_file: target_schema.yaml   # relativo a esta mesma pasta
 scope_tables: []
 
 etl:
-  engine: sql          # sql | python
-  batch_size: 2000
+  # O script gerado cria sequences e tabelas do destino. Desligue quando o
+  # schema de destino já existe e é gerenciado por outro time (as sequences
+  # precisam existir com o nome de sequence_pattern).
+  create_schema: true
+
+  # ON CONFLICT / WHERE NOT EXISTS / UPDATE OR INSERT por dialeto: rodar o
+  # script duas vezes não duplica dados.
+  idempotent: true
+
+  # PK inteira é gerada pela sequence do destino. Use "preserve" nas tabelas
+  # em que a chave da origem deve ser copiada como está.
+  # pk_strategy:
+  #   pessoa: preserve
+
+  sequence_pattern: "seq_{table}"
+
+  # FK para tabela não migrada: falha por padrão (a chave antiga seria
+  # copiada sem tradução).
+  allow_unresolved_fks: false
+
+  # Acima disso o relatório avisa que a carga em uma transação só é pesada.
+  high_volume_rows: 100000

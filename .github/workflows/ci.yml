@@ -14,6 +14,25 @@ jobs:
     name: ruff + pytest
     runs-on: ubuntu-latest
 
+    # O critério de aceitação da Fase 2 ("migra, roda duas vezes, a contagem
+    # bate") só é verificável com banco de verdade — este serviço é o que
+    # transforma a promessa em teste.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+    env:
+      MIGRA_TEST_POSTGRES_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+
     steps:
       - uses: actions/checkout@v4
 
