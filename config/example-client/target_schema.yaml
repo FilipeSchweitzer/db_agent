@@ -1,0 +1,41 @@
+# Schema do sistema de gestão, versionado por release do produto.
+# O Agente 2 lê este arquivo via tool — nunca é hardcoded no código.
+
+version: "2026.1"
+
+tables:
+  pessoa:
+    fields:
+      id:
+        type: integer
+        required: true
+        primary_key: true
+      cpf:
+        type: string
+        format: cpf
+        required: true
+        pii: true
+        validator: validar_cpf
+      nome_completo:
+        type: string
+        required: true
+      data_nascimento:
+        type: date
+        required: false
+      cod_bairro:
+        type: integer
+        required: false
+        references: bairro.id
+
+  bairro:
+    fields:
+      id:
+        type: integer
+        required: true
+        primary_key: true
+      nome:
+        type: string
+        required: true
+      cod_municipio_ibge:
+        type: string
+        required: false

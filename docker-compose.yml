@@ -1,0 +1,44 @@
+services:
+  app:
+    build: .
+    image: migra-agent:latest
+    container_name: migra-agent
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Pasta de configuração deste cliente (schema de destino, credenciais de conexão)
+      - ./config:/app/config:ro
+      # Saída: relatórios, mapeamento para revisão, script de ETL gerado
+      - ./output:/app/output
+    # Mantém o container vivo para rodar comandos via `docker compose exec app ...`
+    command: ["tail", "-f", "/dev/null"]
+    networks:
+      - migra-net
+
+  # Sobe apenas quando LLM_BACKEND=local (perfil "local")
+  ollama:
+    image: ollama/ollama:latest
+    container_name: migra-agent-llm
+    profiles: ["local"]
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    networks:
+      - migra-net
+    # Descomente para GPU NVIDIA disponível no host:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+networks:
+  migra-net:
+
+volumes:
+  ollama-models:

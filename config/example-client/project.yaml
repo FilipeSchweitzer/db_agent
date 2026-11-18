@@ -1,0 +1,28 @@
+# Um arquivo deste tipo por cliente, em config/<nome-do-cliente>/project.yaml
+
+project: example-client
+
+source:
+  dialect: firebird            # firebird | sqlserver | postgres
+  host: 192.168.1.50
+  port: 3050
+  database: /dados/PREFEITURA.FDB
+  user: SYSDBA
+  # senha fica em variável de ambiente, nunca aqui: SOURCE_DB_PASSWORD
+
+target:
+  dialect: postgres
+  host: db-destino.interno
+  port: 5432
+  database: gestao_municipal
+  user: migrador
+  # senha em variável de ambiente: TARGET_DB_PASSWORD
+
+target_schema_file: target_schema.yaml   # relativo a esta mesma pasta
+
+# Tabelas a processar nesta rodada (vazio = todas as tabelas do banco legado)
+scope_tables: []
+
+etl:
+  engine: sql          # sql | python
+  batch_size: 2000

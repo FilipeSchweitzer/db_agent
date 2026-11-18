@@ -1,0 +1,12 @@
+.env
+__pycache__/
+*.pyc
+output/*
+!output/.gitkeep
+.venv/
+
+# artefatos de análise gerados (grafo de conhecimento)
+graphify-out/
+
+# lixo de shell: pastas com nome inválido criadas por expansão quebrada
+{config/
