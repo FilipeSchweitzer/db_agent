@@ -366,12 +366,17 @@ usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
   real não aparece em nenhum prompt; backend remoto com PII não faz chamada) e
   `tests/test_orchestrator.py` (auditoria, versão e aprovador).
 
-### Fase 5 — Avaliação e produto (contínuo)
+### Fase 5 — Avaliação e produto (contínuo) — **golden set + harness entregues**
 
-- **Golden set (o mais importante a longo prazo).** Pegar 2–3 migrações já feitas
-  à mão, com o mapeamento correto conhecido, e medir precisão/recall do Agente 2
-  campo a campo. Sem isso, toda mudança de prompt é fé, não engenharia.
-- Avaliação de discovery: o tipo inferido bate com o tipo real? A flag PII acerta?
+- ✅ **Golden set (o mais importante a longo prazo).** Pegar 2–3 migrações já
+  feitas à mão, com o mapeamento correto conhecido, e medir precisão/recall do
+  Agente 2 campo a campo. Sem isso, toda mudança de prompt é fé, não engenharia.
+  Entregue: `app/evaluation/` (métricas puras de mapeamento/tipo/PII, modos
+  offline e live com `--repeats`, relatório JSON+MD) e os comandos
+  `eval-init` / `evaluate`. O que falta é **popular com migrações reais**:
+  `eval/_example` é só fixture de formato.
+- ✅ Avaliação de discovery: o tipo inferido bate com o tipo real? A flag PII acerta?
+  (mesmo harness; `golden.yaml` -> seção `discovery`)
 - UI de revisão (substituir/complementar o Excel) — o formato `MappingDocument` já
   permite, como o próprio código antecipa.
 - Execução incremental: só re-perfilar tabelas que mudaram; cache de discovery.
@@ -387,7 +392,7 @@ usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
 | 2. ETL correto ✅ | 1–2 semanas | C1, C3, A1, A2, A5 | script parece pronto e corrompe/produz FK errada |
 | 3. Multi-dialeto ✅ | 3–5 dias | C5, A3, A4 | — |
 | 4. Governança ✅ | 3–4 dias | C4 | risco LGPD com dado de cidadão |
-| 5. Avaliação | contínuo | qualidade medida | cada ajuste de prompt é chute |
+| 5. Avaliação (harness ✅) | contínuo | qualidade medida | cada ajuste de prompt é chute |
 
 Se só houver tempo para **uma** coisa: **Fase 2, item 1 (de-para de chaves)**. É a
 diferença entre um gerador de SQL plausível e um migrador que funciona.

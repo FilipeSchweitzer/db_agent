@@ -1,0 +1,131 @@
+{
+  "source_dialect": "firebird",
+  "tables": [
+    {
+      "table": "CAD_PESSOA",
+      "row_count": 1200,
+      "columns": [
+        {
+          "name": "COD_PESSOA",
+          "inferred_type": "integer",
+          "null_rate": 0.0,
+          "distinct_count": 1200,
+          "top_values": ["###", "####"],
+          "pii": false,
+          "notes": "chave primária da origem"
+        },
+        {
+          "name": "CPF",
+          "inferred_type": "string",
+          "null_rate": 0.01,
+          "distinct_count": 1188,
+          "top_values": ["###.###.###-##"],
+          "pii": true,
+          "notes": "documento do titular"
+        },
+        {
+          "name": "NOME",
+          "inferred_type": "string",
+          "null_rate": 0.0,
+          "distinct_count": 940,
+          "top_values": ["<nome>"],
+          "pii": true,
+          "notes": "nome completo"
+        },
+        {
+          "name": "DT_NASC",
+          "inferred_type": "date",
+          "null_rate": 0.12,
+          "distinct_count": 620,
+          "top_values": ["DD/MM/AAAA"],
+          "pii": true,
+          "notes": "data de nascimento"
+        },
+        {
+          "name": "COD_BAIRRO",
+          "inferred_type": "integer",
+          "null_rate": 0.03,
+          "distinct_count": 48,
+          "top_values": ["##"],
+          "pii": false,
+          "notes": "referência ao bairro"
+        }
+      ],
+      "risks": []
+    },
+    {
+      "table": "CAD_BAIRRO",
+      "row_count": 48,
+      "columns": [
+        {
+          "name": "COD_BAIRRO",
+          "inferred_type": "integer",
+          "null_rate": 0.0,
+          "distinct_count": 48,
+          "top_values": ["##"],
+          "pii": false,
+          "notes": "chave primária da origem"
+        },
+        {
+          "name": "NOME_BAIRRO",
+          "inferred_type": "string",
+          "null_rate": 0.0,
+          "distinct_count": 48,
+          "top_values": ["AAA AAA"],
+          "pii": false,
+          "notes": "nome do bairro"
+        },
+        {
+          "name": "COD_MUN",
+          "inferred_type": "string",
+          "null_rate": 0.0,
+          "distinct_count": 1,
+          "top_values": ["#######"],
+          "pii": false,
+          "notes": "código IBGE do município"
+        }
+      ],
+      "risks": []
+    },
+    {
+      "table": "CAD_TELEFONE",
+      "row_count": 2100,
+      "columns": [
+        {
+          "name": "COD_TELEFONE",
+          "inferred_type": "integer",
+          "null_rate": 0.0,
+          "distinct_count": 2100,
+          "top_values": ["####"],
+          "pii": false,
+          "notes": "chave primária da origem"
+        },
+        {
+          "name": "NUMERO",
+          "inferred_type": "string",
+          "null_rate": 0.02,
+          "distinct_count": 1500,
+          "top_values": ["(##) #####-####"],
+          "pii": true,
+          "notes": "telefone do titular"
+        },
+        {
+          "name": "COD_PESSOA",
+          "inferred_type": "integer",
+          "null_rate": 0.0,
+          "distinct_count": 900,
+          "top_values": ["####"],
+          "pii": false,
+          "notes": "referência à pessoa"
+        }
+      ],
+      "risks": []
+    }
+  ],
+  "pii_columns": [
+    "CAD_PESSOA.CPF",
+    "CAD_PESSOA.DT_NASC",
+    "CAD_PESSOA.NOME",
+    "CAD_TELEFONE.NUMERO"
+  ]
+}

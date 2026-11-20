@@ -26,7 +26,9 @@ migra-agent/
 │   ├── agents/                 # Agente 1 (discovery), Agente 2 (mapeamento), Agente 3 (ETL)
 │   ├── etl/                    # plano de migração + SQL por dialeto
 │   ├── privacy/                # mascaramento de PII, política de backend e auditoria
+│   ├── evaluation/             # golden set, métricas e execução da avaliação
 │   └── review/                 # planilha de revisão humana + aprovação por hash
+├── eval/<caso>/                # golden set versionado (golden.yaml + schema + discovery)
 ├── output/<cliente>/           # gerado em runtime: relatórios, mapeamento, script final
 └── tests/
 ```
@@ -151,6 +153,73 @@ O pipeline parte de uma regra: **o LLM precisa do padrão, não do valor**.
 - **Aprovador nomeado.** `generate --approved-by "nome"`, ou `MIGRA_APPROVER`
   no ambiente; sem nenhum dos dois, usa o usuário do sistema. O nome fica no
   `auditoria.json` e no `relatorio.md`.
+
+## Avaliação com golden set (Fase 5)
+
+Mudar prompt sem medir é chute. O harness compara o Agente 2 com um
+**mapeamento humano congelado** e devolve precisão, recall e onde errou — campo
+a campo.
+
+Um caso é uma pasta com três arquivos:
+
+```
+eval/<caso>/
+├── golden.yaml            # a verdade: o que cada campo deve ter como origem
+├── target_schema.yaml     # schema de destino usado no caso
+└── discovery_report.json  # perfilamento congelado (a avaliação não abre banco)
+```
+
+Congelar o discovery é o que torna o número comparável: duas execuções do
+mesmo caso medem prompt/agente, não a variação do banco.
+
+```bash
+# 1. criar o rascunho a partir de um `map` real (discovery já sanitizado)
+docker compose exec app python -m app.main eval-init caso-cliente --project example-client
+
+# 2. revisar CADA linha de eval/caso-cliente/golden.yaml contra a migração
+#    manual — é a revisão humana que transforma o rascunho em golden set
+
+# 3. medir: offline compara um mapping.json existente (custo zero, sem LLM)
+docker compose exec app python -m app.main evaluate caso-cliente \
+    --mapping output/example-client/mapping.json
+
+# ou live: roda o Agente 2 contra o discovery congelado
+docker compose exec app python -m app.main evaluate caso-cliente --repeats 3
+```
+
+Relatórios em `output/eval/<caso>/eval_report.json` e `.md`. O modo live passa
+pela mesma política de PII do `map` (PII + backend remoto = nenhuma chamada).
+
+### Regras do `golden.yaml`
+
+| Campo | Efeito |
+|---|---|
+| `source_table`/`source_field` nulos | o campo **deve** ficar sem origem |
+| `transformation` ausente | não avalia transformação |
+| `transformation: null` | deve sair sem transformação |
+| `discovery` | opcional; preencha `inferred_type`/`pii` para medir o Agente 1 |
+
+O `golden.yaml` tem que listar **todos** os campos do `target_schema.yaml` —
+inclusive os que devem ficar sem origem. Caso incompleto falha na carga, em vez
+de transformar "não avaliei" em "acertou".
+
+### O que é medido
+
+- **Mapeamento:** precisão/recall/F1 por campo de destino; "mapeou errado" conta
+  como falso positivo e falso negativo ao mesmo tempo. Acerto exato, acerto em
+  deixar sem origem, por tabela, e acerto de transformação.
+- **Estabilidade:** com `--repeats N`, média/desvio das métricas e a fração de
+  campos em que todas as execuções concordaram.
+- **Discovery:** acurácia de tipo por família (`varchar` ≡ `string`,
+  `int` ≡ `integer`) e precisão/recall da flag de PII. **Falso negativo de PII**
+  aparece destacado: é o erro caro.
+
+`eval/_example/` é uma fixture sintética de formato — serve para exercitar o
+harness no CI, não como benchmark. Números que valem vêm de migrações reais.
+
+Casos de cliente podem ficar **fora do repositório** (`EVAL_ROOT=/caminho`),
+para nome de tabela e de cliente não vazarem; o `.gitignore` já cobre
+`output/`.
 
 ## Rodando com modelo local (Ollama)
 

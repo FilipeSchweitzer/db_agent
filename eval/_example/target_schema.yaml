@@ -1,0 +1,46 @@
+# Fixture de formato — NÃO é benchmark.
+# Copiado de config/example-client com um campo extra (`observacao`) para
+# exercitar o caso "deve ficar sem origem".
+version: "2026.1"
+
+tables:
+  pessoa:
+    fields:
+      id:
+        type: integer
+        required: true
+        primary_key: true
+      cpf:
+        type: string
+        format: cpf
+        required: true
+        pii: true
+        validator: validar_cpf
+      nome_completo:
+        type: string
+        required: true
+        pii: true
+      data_nascimento:
+        type: date
+        required: false
+        pii: true
+      cod_bairro:
+        type: integer
+        required: false
+        references: bairro.id
+      observacao:
+        type: string
+        required: false
+
+  bairro:
+    fields:
+      id:
+        type: integer
+        required: true
+        primary_key: true
+      nome:
+        type: string
+        required: true
+      cod_municipio_ibge:
+        type: string
+        required: false

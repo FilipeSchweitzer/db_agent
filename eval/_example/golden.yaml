@@ -1,0 +1,86 @@
+# Fixture de formato, não benchmark: exercita todos os caminhos do avaliador
+# (acerto, erro de origem, campo que deve ficar unmapped, transformação, tipo
+# e PII). Um caso real vem de `eval-init` + revisão humana.
+case: _example
+description: >-
+  Caso sintético de 3 tabelas para exercitar o harness. Os números que ele
+  produz não dizem nada sobre qualidade em cliente real.
+synthetic: true
+source_dialect: firebird
+target_schema_version: "2026.1"
+
+mapping:
+  - target_table: pessoa
+    target_field: id
+    source_table: CAD_PESSOA
+    source_field: COD_PESSOA
+  - target_table: pessoa
+    target_field: cpf
+    source_table: CAD_PESSOA
+    source_field: CPF
+    transformation: regex_extract_digits
+  - target_table: pessoa
+    target_field: nome_completo
+    source_table: CAD_PESSOA
+    source_field: NOME
+  - target_table: pessoa
+    target_field: data_nascimento
+    source_table: CAD_PESSOA
+    source_field: DT_NASC
+    transformation: parse_date_br
+  - target_table: pessoa
+    target_field: cod_bairro
+    source_table: CAD_PESSOA
+    source_field: COD_BAIRRO
+  - target_table: pessoa
+    target_field: observacao
+    source_table: null
+    source_field: null
+    transformation: null
+
+  - target_table: bairro
+    target_field: id
+    source_table: CAD_BAIRRO
+    source_field: COD_BAIRRO
+  - target_table: bairro
+    target_field: nome
+    source_table: CAD_BAIRRO
+    source_field: NOME_BAIRRO
+  - target_table: bairro
+    target_field: cod_municipio_ibge
+    source_table: CAD_BAIRRO
+    source_field: COD_MUN
+
+discovery:
+  - table: CAD_PESSOA
+    column: CPF
+    inferred_type: string
+    pii: true
+  - table: CAD_PESSOA
+    column: NOME
+    inferred_type: string
+    pii: true
+  - table: CAD_PESSOA
+    column: DT_NASC
+    inferred_type: date
+    pii: true
+  - table: CAD_PESSOA
+    column: COD_BAIRRO
+    inferred_type: integer
+    pii: false
+  - table: CAD_BAIRRO
+    column: NOME_BAIRRO
+    inferred_type: string
+    pii: false
+  - table: CAD_BAIRRO
+    column: COD_MUN
+    inferred_type: string
+    pii: false
+  - table: CAD_TELEFONE
+    column: NUMERO
+    inferred_type: string
+    pii: true
+  - table: CAD_TELEFONE
+    column: COD_PESSOA
+    inferred_type: integer
+    pii: false
