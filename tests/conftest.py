@@ -120,6 +120,7 @@ def make_mapping() -> MappingDocument:
         mapping_id=str(uuid.uuid4()),
         project="test-client",
         entries=entries,
+        target_schema_version="test.1",
     )
 
 

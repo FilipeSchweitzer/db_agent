@@ -25,6 +25,7 @@ migra-agent/
 │   ├── schemas/                # contratos Pydantic entre as fases
 │   ├── agents/                 # Agente 1 (discovery), Agente 2 (mapeamento), Agente 3 (ETL)
 │   ├── etl/                    # plano de migração + SQL por dialeto
+│   ├── privacy/                # mascaramento de PII, política de backend e auditoria
 │   └── review/                 # planilha de revisão humana + aprovação por hash
 ├── output/<cliente>/           # gerado em runtime: relatórios, mapeamento, script final
 └── tests/
@@ -116,10 +117,40 @@ Não existe backend obrigatório. A escolha é só `LLM_BACKEND` no `.env`:
 O backend `openai` com `LLM_BASE_URL` vazio fala com a OpenAI oficial; com
 `LLM_BASE_URL` preenchido fala com qualquer servidor compatível.
 
+**Exceção que não é sugestão:** quando o discovery encontra PII, só backend
+local é aceito — ver "Privacidade e LGPD" abaixo.
+
 Todos os backends passam pela mesma camada de robustez (`app/llm/client.py`):
 parse tolerante, validação Pydantic, até `LLM_MAX_ATTEMPTS` tentativas com
 backoff exponencial, e **o erro de validação volta no prompt** para o modelo
 corrigir a própria resposta.
+
+## Privacidade e LGPD (Fase 4)
+
+O pipeline parte de uma regra: **o LLM precisa do padrão, não do valor**.
+
+- **Máscara antes de enviar.** `top_values` de toda coluna vira forma
+  (`###.###.###-##`, `DD/MM/AAAA`, `<nome>`, `<endereço>`, `AA` para UF...).
+  A máscara é aplicada duas vezes: ao montar o prompt do Agente 1 e ao
+  gravar/reler o `discovery_report.json`. Notas e riscos também passam por
+  uma varredura que troca CPF/CNPJ/e-mail/telefone/data reconhecíveis.
+- **PII não sai da rede.** Se o perfilamento encontra indício de dado pessoal
+  (nome de coluna ou forma do valor), o backend de LLM precisa ser local:
+  `LLM_BACKEND=local`/`ollama`, ou `openai` com `LLM_BASE_URL` em loopback,
+  IP privado, nome de serviço (`ollama`) ou domínio interno. Um backend
+  remoto **interrompe** a execução antes da primeira chamada. Sem PII,
+  nenhum backend é exigido — o invariante da Fase 1 continua valendo.
+- **Trilha de auditoria.** Cada `discover`/`map`/`generate` acrescenta uma
+  entrada em `auditoria.json`: `run_id`, horários, usuário/host, aprovador,
+  versão do `target_schema`, SHA-256 do `mapping.json`/estado revisado e dos
+  artefatos, além do resumo de PII (colunas, backend, se é local).
+- **Versão do schema vale de verdade.** `mapping.json` guarda a versão do
+  `target_schema.yaml` contra a qual foi proposto. Se o YAML mudar antes do
+  `generate`, a geração se recusa a rodar (`--force` assume o risco e o
+  registro sai com `compatible: false`).
+- **Aprovador nomeado.** `generate --approved-by "nome"`, ou `MIGRA_APPROVER`
+  no ambiente; sem nenhum dos dois, usa o usuário do sistema. O nome fica no
+  `auditoria.json` e no `relatorio.md`.
 
 ## Rodando com modelo local (Ollama)
 
@@ -140,6 +171,10 @@ Além disso, `map` grava `approval.json` com o SHA-256 do `mapping.json`. Se o
 (use `--force` para assumir o risco): o script sairia diferente do que foi
 aprovado.
 
+A aprovação também fica nominal: `generate --approved-by "analista"` (ou
+`MIGRA_APPROVER`) registra quem aprovou em `auditoria.json` e no
+`relatorio.md`, junto com a versão do `target_schema` usada no mapeamento.
+
 ## Artefatos gerados em `output/<cliente>/`
 
 | Arquivo | Quando | Conteúdo |
@@ -154,6 +189,7 @@ aprovado.
 | `etl_constraints.sql` | `generate` | FKs do destino |
 | `etl_validation.sql` | `generate` | contagens e órfãos |
 | `relatorio.md` | `generate` | aprovados, pendentes, avisos e ordem de execução |
+| `auditoria.json` | toda fase | quem executou/aprovou, quando, versões, hashes e PII |
 | `run_log.json` | toda fase | tokens, latência e tentativas por chamada de LLM |
 
 `run_log.json` é cumulativo: cada execução de `discover`/`map`/`generate`

@@ -95,3 +95,38 @@ def review_fingerprint(mapping) -> str:
         f"{entry.target_table}.{entry.target_field}={entry.status}" for entry in mapping.entries
     )
     return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def check_schema_compatibility(
+    mapping_version: str | None,
+    schema_version: str,
+    approval: dict | None = None,
+    *,
+    force: bool = False,
+) -> dict:
+    """Compara a versão do schema usada no mapeamento com a atual.
+
+    `target_schema.yaml` tem `version: "2026.1"` desde o começo; até a Fase 4
+    ela era decorativa. Aqui ela passa a valer: um mapeamento proposto contra
+    a versão A e um schema em disco na versão B não descrevem a mesma coisa.
+
+    `force=True` não impede a execução, mas o resultado sai com
+    `compatible=False` para a auditoria registrar o risco assumido.
+    """
+    expected = mapping_version or (approval or {}).get("target_schema_version")
+    compatible = None if not expected else expected == schema_version
+
+    if compatible is False and not force:
+        raise ApprovalError(
+            "target_schema.yaml mudou desde que o mapeamento foi gerado.\n"
+            f"  versão do mapeamento: {expected}\n"
+            f"  versão em disco:      {schema_version}\n"
+            "O mapeamento descreve outro schema. Rode 'map' de novo e revise a "
+            "planilha (ou use --force para assumir o risco, registrado na auditoria)."
+        )
+
+    return {
+        "mapping_version": expected,
+        "schema_version": schema_version,
+        "compatible": compatible,
+    }

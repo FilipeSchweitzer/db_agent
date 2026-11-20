@@ -98,6 +98,7 @@ class MappingAgent:
             mapping_id=str(uuid.uuid4()),
             project=project,
             entries=entries,
+            target_schema_version=target_schema.version,
             unmapped_target_fields=sorted(set(unmapped) | set(missing)),
             warnings=warnings,
         )

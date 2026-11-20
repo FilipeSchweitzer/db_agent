@@ -17,19 +17,11 @@ Duas regras que valem para todas as tools:
 """
 from __future__ import annotations
 
-import re
-
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine
 
 from app.db.read_only import ensure_read_only
-
-# Regras simples de detecção de PII por nome de coluna — ponto de partida,
-# o Agente 1 deve refinar isso olhando os valores reais, não só o nome.
-_PII_NAME_HINTS = re.compile(
-    r"cpf|cnpj|rg\b|nome|endereco|telefone|email|nascimento|matricula",
-    re.IGNORECASE,
-)
+from app.privacy.masking import is_pii_name
 
 
 def _dialect_name(engine: Engine) -> str:
@@ -152,8 +144,12 @@ def profile_column(engine: Engine, table: str, column: str) -> dict:
 
 
 def detect_pii_by_name(column_name: str) -> bool:
-    """Heurística rápida por nome — o Agente 1 deve confirmar com profile_column."""
-    return bool(_PII_NAME_HINTS.search(column_name))
+    """Heurística rápida por nome — o Agente 1 deve confirmar com profile_column.
+
+    Delega para `app.privacy.masking.is_pii_name` para que a pista de nome e
+    a máscara usem exatamente a mesma lista (CPF, CNPJ, fone, CEP, ...).
+    """
+    return is_pii_name(column_name)
 
 
 def run_readonly_query(engine: Engine, sql: str) -> list[dict]:

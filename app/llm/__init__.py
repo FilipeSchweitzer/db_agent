@@ -23,9 +23,14 @@ BACKENDS = ("openai", "ollama", "anthropic")
 _ALIASES = {"local": "ollama", "openai-compatible": "openai", "compatible": "openai"}
 
 
+def normalize_backend_name(raw: str | None) -> str:
+    """`local` -> `ollama`, `openai-compatible` -> `openai`, sem caixa."""
+    value = (raw or "").strip().lower()
+    return _ALIASES.get(value, value)
+
+
 def current_backend_name() -> str:
-    raw = (os.environ.get("LLM_BACKEND") or "openai").strip().lower()
-    return _ALIASES.get(raw, raw)
+    return normalize_backend_name(os.environ.get("LLM_BACKEND")) or "openai"
 
 
 def _float_env(name: str, default: float) -> float:

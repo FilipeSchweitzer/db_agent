@@ -167,7 +167,7 @@ em um cliente de verdade".
 | C1 | ~~**Chave substituta (surrogate key) não é tratada.**~~ **Resolvido na Fase 2:** `references` agora é lido por `TargetSchema.references()`; `app/etl/plan.py` cria `_map_<tabela>(old_key, new_id)` e a carga faz `JOIN` nele para PK e FK. | `app/schemas/target_schema.py`, `app/etl/plan.py` | Histórico: `pessoa.cod_bairro` no legado referenciava o código antigo, mas `bairro.id` no destino é gerado — sem de-para, o INSERT quebrava ou apontava para o registro errado. |
 | C2 | ~~**`max_tokens=4096` fixo + schema inteiro em um único prompt.**~~ **Resolvido na Fase 1:** o Agente 2 agora mapeia **uma tabela de destino por chamada** (`MappingAgent.run`), e o `max_tokens` vem de `LLM_MAX_TOKENS`. | `app/agents/agent2_mapping.py` | Histórico: com 20 tabelas o JSON estourava 4096 tokens, truncava e `json.loads` falhava. Hoje o tamanho da resposta é proporcional a uma tabela, não ao schema inteiro. |
 | C3 | ~~**ETL sem DDL, sem transação, sem idempotência.**~~ **Resolvido na Fase 2:** `etl_schema.sql` (sequences + tabelas), ordem topológica de FK, `BEGIN`/`COMMIT` por tabela, insert idempotente por dialeto e FKs aplicadas depois da carga. A carga em lotes por `batch_size` foi deliberadamente adiada (uma tabela por transação) e o `relatorio.md` avisa quando o volume pede lote. `etl.engine`/`batch_size` foram removidos da config. | `app/etl/` | Histórico: o script só fazia `INSERT INTO ... SELECT`; rodar duas vezes duplicava dados e nenhuma FK era criada. |
-| C4 | **PII vai para a nuvem.** `top_values` reais (CPF, nome, endereço) entram no prompt enviado ao Anthropic. | `app/db/introspection.py:61-76` → `agent1_discovery.py:56-60` | Exposição de dado pessoal a terceiro sem base legal explícita — problema de LGPD, não de engenharia. |
+| C4 | ~~**PII vai para a nuvem.** `top_values` reais (CPF, nome, endereço) entram no prompt enviado ao Anthropic.~~ **Resolvido na Fase 4:** todo `top_values` vira padrão antes de qualquer chamada (`app/privacy/masking.py`), notas/riscos passam por varredura de documento/e-mail/telefone/data, e havendo PII o backend precisa ser local (`app/privacy/policy.py`). Cada execução grava `auditoria.json` com aprovador, versões, hashes e resumo de PII. | `app/privacy/`, `app/agents/agent1_discovery.py` | Histórico: CPF/nome/endereço reais entravam no prompt sem base legal explícita. Hoje o modelo vê a **forma** (`###.###.###-##`), nunca o valor. |
 | C5 | ~~**Suspeita de dependência faltando para Firebird.** `requirements.txt` pina `sqlalchemy==2.0.35` e inclui `fdb`, mas não `sqlalchemy-firebird`.~~ **Resolvido na Fase 3:** `sqlalchemy-firebird==2.2.0` + `firebird-driver==2.1.2` no `requirements.txt` e `pyproject.toml`; dialeto `firebird+firebird://` (o `fdb` foi removido); `FIREBIRD_CLIENT_LIBRARY` aponta `libfbclient` quando a do sistema não serve. Conexão real validada contra Firebird 5.0.3. | `app/db/connectors.py`, `requirements.txt` | O dialeto Firebird saiu do core do SQLAlchemy 2.0; sem o pacote separado `create_engine` levantava `NoSuchModuleError`. |
 
 ### 5.2 Alto
@@ -192,8 +192,11 @@ em um cliente de verdade".
   docstring.
 - **Escala:** 1 chamada de LLM por tabela, sequencial, sem cache, sem paralelismo,
   sem orçamento de tokens (`agent1_discovery.py:46-68`).
-- **Custo/observabilidade:** sem logging estruturado, sem métricas por fase, sem
-  `run_id`, sem artefato de auditoria da execução.
+- ~~**Custo/observabilidade:** sem logging estruturado, sem métricas por fase,
+  sem `run_id`, sem artefato de auditoria da execução.~~ **Resolvido na Fase 4:**
+  `auditoria.json` tem `run_id`, horários, usuário/host, aprovador, hashes e
+  versões por execução; o `run_log.json` continua com tokens/latência por
+  chamada. Ainda falta logging estruturado/métricas de infraestrutura.
 - **Descoberta rasa em relacionamento:** não infere FK implícita ("cod_bairro"
   apontando para "bairro"), não detecta órfãos, não mede min/max de datas nem
   distribuição além do top-10.
@@ -212,7 +215,9 @@ em um cliente de verdade".
   de SQL por dialeto, dry-run, `approval`, round-trip Excel
   (`export_to_xlsx` → `load_reviewed_xlsx`, incluindo status inválido e linha
   removida), `run_log` do `generate` e um teste de integração contra Postgres
-  real (marcado `integration`). Continua sem teste `detect_pii_by_name`.
+  real (marcado `integration`). A Fase 4 acrescentou mascaramento, política de
+  backend local, auditoria e versão do schema; `detect_pii_by_name` agora tem
+  teste (delega para `is_pii_name`).
 - ~~**Sem `pyproject.toml`**, sem ruff, sem CI.~~ **Resolvido na Fase 0:**
   `pyproject.toml` (projeto instalável, ruff + pytest) e `.github/workflows/ci.yml`
   rodando `ruff check` + `pytest` em push/PR. Ainda falta mypy/pyright e pre-commit.
@@ -335,18 +340,31 @@ usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
   sem tocar em código. Critério validado: transformações e introspecção
   funcionam nos 3 dialetos de origem; testes unitários cobrem cada dialeto.
 
-### Fase 4 — Governança e LGPD (3–4 dias) — destrava C4
+### Fase 4 — Governança e LGPD (3–4 dias) — **CONCLUÍDA** — destrava C4
 
-- **Mascarar antes de enviar:** `top_values` de colunas `pii=true` viram
-  tipo+formato (`"###.###.###-##"`, `"<nome>"`, `"DD/MM/AAAA"`) em vez do valor
-  real. O LLM não precisa do CPF, precisa do **padrão**.
-- Modo `LLM_BACKEND=local` obrigatório quando PII é detectada (regra de negócio,
-  não sugestão).
-- Trilha de auditoria: quem aprovou, quando, qual versão do mapping, qual versão do
-  `target_schema` (`version: "2026.1"` já existe — só não é usada para checar
-  compatibilidade).
+- ✅ **Mascarar antes de enviar.** `top_values` de toda coluna viram a forma do
+  valor (`"###.###.###-##"`, `"<nome>"`, `"DD/MM/AAAA"`, `"AA"`), nunca o valor.
+  A máscara roda duas vezes: ao montar o prompt (`agent1_discovery.py`) e ao
+  sanitizar o `discovery_report.json` gravado ou relido (`app/privacy/report.py`).
+  Notas e riscos passam por uma varredura que troca CPF/CNPJ/e-mail/telefone/data
+  reconhecíveis.
+- ✅ **`LLM_BACKEND=local` obrigatório quando há PII.** A decisão usa nome da
+  coluna + forma do valor, e é tomada **depois** do perfilamento e **antes** da
+  primeira chamada. `local`/`ollama`, ou `openai` com `LLM_BASE_URL` em loopback,
+  IP privado, nome de serviço ou domínio interno, são aceitos; o resto levanta
+  `PIIPolicyError`. Sem PII, nenhum backend é exigido (invariante da Fase 1).
+- ✅ **Trilha de auditoria.** `auditoria.json` (cumulativo, escrito de forma
+  atômica) tem uma entrada por execução com `run_id`, início/fim/duração,
+  usuário/host, aprovador (`--approved-by` > `MIGRA_APPROVER` > usuário do SO),
+  versão do `target_schema`, SHA-256 do `mapping.json`/estado revisado e dos
+  artefatos, e resumo de PII (colunas, backend, se é local).
+- ✅ **Versão do schema checada.** `mapping.json` guarda a versão do
+  `target_schema.yaml`; o `generate` recusa rodar se o YAML mudou
+  (`--force` registra `compatible: false` na auditoria em vez de esconder).
 - **Pronto quando:** nenhum valor de PII sai da rede, e existe um
-  `auditoria.json` por execução.
+  `auditoria.json` por execução. — provado por `tests/test_privacy.py` (o valor
+  real não aparece em nenhum prompt; backend remoto com PII não faz chamada) e
+  `tests/test_orchestrator.py` (auditoria, versão e aprovador).
 
 ### Fase 5 — Avaliação e produto (contínuo)
 
@@ -368,7 +386,7 @@ usável". Entregue em `app/etl/` (plano + geração) e `app/review/approval.py`:
 | 1. LLM robusto ✅ | 2–3 dias | C2, A7 | fase 2 não completa em cliente real |
 | 2. ETL correto ✅ | 1–2 semanas | C1, C3, A1, A2, A5 | script parece pronto e corrompe/produz FK errada |
 | 3. Multi-dialeto ✅ | 3–5 dias | C5, A3, A4 | — |
-| 4. Governança | 3–4 dias | C4 | risco LGPD com dado de cidadão |
+| 4. Governança ✅ | 3–4 dias | C4 | risco LGPD com dado de cidadão |
 | 5. Avaliação | contínuo | qualidade medida | cada ajuste de prompt é chute |
 
 Se só houver tempo para **uma** coisa: **Fase 2, item 1 (de-para de chaves)**. É a
@@ -378,21 +396,24 @@ diferença entre um gerador de SQL plausível e um migrador que funciona.
 
 ## 8. Nota sobre o estado do repositório
 
-> Atualizado depois das Fases 0, 1 e 2. O restante do documento é a análise
-> original e continua válido para as lacunas ainda abertas.
+> Atualizado depois das Fases 0, 1, 2, 3 e 4. O restante do documento é a
+> análise original e continua válido para as lacunas ainda abertas.
 
 - Repositório git em `main`, sincronizado com `origin`; CI verde
   (`ruff check` + `pytest`) em cada push.
 - `graphify-out/` está no `.gitignore` — é artefato de análise, não faz parte do
   produto.
 - `{config/` foi removido.
-- Suíte de testes: 144 testes. A maioria é offline; os de integração (marcados
+- Suíte de testes: 200 testes. A maioria é offline; os de integração (marcados
   `integration`) rodam contra Postgres 16 real e são pulados quando
   `MIGRA_TEST_POSTGRES_DSN` não está definido.
 - **O pipeline já rodou de ponta a ponta contra Postgres 16**: `discover` não
   (exige LLM), mas `map`-artefatos -> revisão da planilha -> `generate` ->
   execução dos quatro scripts -> validação foi exercitado com dados reais em
   schema `legado`, e está coberto por teste automatizado no CI.
+- **Garantia de PII testada:** `tests/test_privacy.py` percorre o Agente 1 com
+  CPF/nome reais e um LLM de mentira, e afirma que o valor não aparece em
+  nenhum prompt; com backend remoto e PII, nenhuma chamada acontece.
 - Lacunas honestas que restam: `discover`/`map` só foram validados com LLM
   simulado (nenhum teste bate na API de um provedor de verdade); a carga em
   lote por `batch_size` não existe — o script faz uma transação por tabela, o

@@ -8,8 +8,11 @@ import yaml
 
 from app import config as app_config
 from app import orchestrator
+from app.db import introspection as tools
+from app.privacy.policy import PIIPolicyError
 from app.review.approval import ApprovalError, write_approval
 from app.review.export import export_to_xlsx
+from app.schemas.profiling import ColumnProfile, DiscoveryReport, TableProfile
 from support import ScriptedClient
 from tests.conftest import make_mapping, make_schema
 
@@ -171,3 +174,177 @@ def test_generate_registra_secoes_no_run_log(projeto):
     assert entry["mapping_sha256"]
     assert entry["review_sha256"]
     assert entry["artifacts"] == ["etl_plan.json"]
+
+
+# ----------------------------------------------------------------------
+# Fase 4: auditoria.json, versão do schema e PII
+# ----------------------------------------------------------------------
+def _schema_path(projeto):
+    return projeto.parents[1] / "config" / PROJECT_NAME / "target_schema.yaml"
+
+
+def _escrever_discovery(projeto, report: DiscoveryReport) -> None:
+    (projeto / "discovery_report.json").write_text(
+        report.model_dump_json(indent=2), encoding="utf-8"
+    )
+
+
+def _discovery_com_pii() -> DiscoveryReport:
+    return DiscoveryReport(
+        source_dialect="postgres",
+        tables=[
+            TableProfile(
+                table="CAD_PESSOA",
+                row_count=10,
+                columns=[
+                    ColumnProfile(
+                        name="NUM_DOC",
+                        inferred_type="string",
+                        null_rate=0.0,
+                        top_values=["123.456.789-00"],
+                        notes="documento 123.456.789-00",
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def test_generate_grava_auditoria_por_execucao(projeto):
+    orchestrator.run_etl_generation(PROJECT_NAME, approved_by="maria.silva")
+
+    data = json.loads((projeto / "auditoria.json").read_text(encoding="utf-8"))
+    record = data["executions"][-1]
+
+    assert data["schema_version"] == 1
+    assert record["phase"] == "generate"
+    assert record["run_id"]
+    assert record["approver"] == "maria.silva"
+    assert record["actor"]["user"]
+    assert record["mapping"]["sha256"]
+    assert record["review"]["sha256"]
+    assert record["review"]["approved"] > 0
+    assert record["target_schema"]["schema_version"] == "test.1"
+    assert record["target_schema"]["compatible"] is True
+    assert "etl_script.sql" in record["artifacts"]
+    assert "relatorio.md" in record["artifacts"]
+    assert record["pii"]["masked"] is True
+    assert record["pii"]["detected"] is False
+
+
+def test_generate_dry_run_audita_sem_artefatos_executaveis(projeto):
+    orchestrator.run_etl_generation(PROJECT_NAME, dry_run=True)
+
+    record = json.loads((projeto / "auditoria.json").read_text())["executions"][-1]
+
+    assert record["dry_run"] is True
+    assert record["artifacts"] == {"etl_plan.json": record["artifacts"]["etl_plan.json"]}
+
+
+def test_generate_recusa_schema_de_versao_diferente(projeto):
+    schema_path = _schema_path(projeto)
+    schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema["version"] = "test.2"
+    schema_path.write_text(yaml.safe_dump(schema, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ApprovalError, match="target_schema.yaml mudou"):
+        orchestrator.run_etl_generation(PROJECT_NAME)
+
+    assert not (projeto / "etl_script.sql").exists()
+
+
+def test_force_gera_e_audita_o_schema_incompativel(projeto):
+    schema_path = _schema_path(projeto)
+    schema = yaml.safe_load(schema_path.read_text(encoding="utf-8"))
+    schema["version"] = "test.2"
+    schema_path.write_text(yaml.safe_dump(schema, sort_keys=False), encoding="utf-8")
+
+    orchestrator.run_etl_generation(PROJECT_NAME, force=True)
+
+    record = json.loads((projeto / "auditoria.json").read_text())["executions"][-1]
+    assert record["target_schema"]["compatible"] is False
+    assert record["force"] is True
+
+
+def test_discover_grava_auditoria_e_relatorio_mascarado(projeto, monkeypatch):
+    monkeypatch.setenv("LLM_BACKEND", "local")
+    monkeypatch.setattr(orchestrator, "get_engine", lambda *args, **kwargs: object())
+    monkeypatch.setattr(tools, "list_tables", lambda engine: ["CAD_PESSOA"])
+    monkeypatch.setattr(
+        tools, "get_schema", lambda engine, table: [{"name": "CPF", "type": "VARCHAR(14)"}]
+    )
+    monkeypatch.setattr(
+        tools,
+        "profile_column",
+        lambda engine, table, column: {
+            "table": table,
+            "column": column,
+            "row_count": 10,
+            "null_rate": 0.0,
+            "distinct_count": 2,
+            "top_values": ["123.456.789-00"],
+        },
+    )
+    client = ScriptedClient(
+        [
+            json.dumps(
+                {
+                    "table": "CAD_PESSOA",
+                    "row_count": 10,
+                    "columns": [
+                        {
+                            "name": "CPF",
+                            "inferred_type": "string",
+                            "null_rate": 0.0,
+                            "top_values": ["###.###.###-##"],
+                            "pii": True,
+                        }
+                    ],
+                    "risks": [],
+                }
+            )
+        ]
+    )
+    monkeypatch.setattr(orchestrator, "get_llm_client", lambda: client)
+
+    path = orchestrator.run_discovery(PROJECT_NAME)
+
+    report = json.loads(path.read_text(encoding="utf-8"))
+    assert "123.456.789-00" not in path.read_text(encoding="utf-8")
+    assert report["pii_columns"] == ["CAD_PESSOA.CPF"]
+
+    record = json.loads((projeto / "auditoria.json").read_text())["executions"][-1]
+    assert record["phase"] == "discovery"
+    assert record["pii"]["detected"] is True
+    assert record["pii"]["columns"] == ["CAD_PESSOA.CPF"]
+    assert record["artifacts"]["discovery_report.json"]
+
+
+def test_map_exige_backend_local_quando_ha_pii(projeto, monkeypatch):
+    _escrever_discovery(projeto, _discovery_com_pii())
+    monkeypatch.setenv("LLM_BACKEND", "openai")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+
+    with pytest.raises(PIIPolicyError, match="sai da rede"):
+        orchestrator.run_mapping(PROJECT_NAME)
+
+
+def test_map_com_backend_local_mascara_e_registra_a_versao(projeto, monkeypatch):
+    _escrever_discovery(projeto, _discovery_com_pii())
+    monkeypatch.setenv("LLM_BACKEND", "local")
+    client = ScriptedClient(
+        [json.dumps({"entries": [], "unmapped_target_fields": []})] * 4
+    )
+    monkeypatch.setattr(orchestrator, "get_llm_client", lambda: client)
+
+    orchestrator.run_mapping(PROJECT_NAME)
+
+    mapping = json.loads((projeto / "mapping.json").read_text(encoding="utf-8"))
+    assert mapping["target_schema_version"] == "test.1"
+    assert "123.456.789-00" not in " ".join(client.prompts)
+
+    record = json.loads((projeto / "auditoria.json").read_text())["executions"][-1]
+    assert record["phase"] == "mapping"
+    assert record["pii"]["detected"] is True
+    assert record["pii"]["columns"] == ["CAD_PESSOA.NUM_DOC"]
+    assert record["pii"]["llm_local"] is True

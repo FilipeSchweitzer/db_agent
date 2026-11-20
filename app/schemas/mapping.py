@@ -56,6 +56,10 @@ class MappingDocument(BaseModel):
     mapping_id: str
     project: str
     entries: list[MappingEntry]
+    # Versão do target_schema contra a qual o mapeamento foi proposto. O
+    # `generate` recusa rodar se o schema em disco mudou desde então — mapear
+    # um campo que deixou de existir produz script que não roda.
+    target_schema_version: str | None = None
     unmapped_target_fields: list[str] = []
     unmapped_source_fields: list[str] = []
     # Ajustes que o pipeline fez por conta própria ao montar o documento

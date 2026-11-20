@@ -14,6 +14,7 @@ from app.review.approval import (
     APPROVAL_FILE,
     MAPPING_FILE,
     ApprovalError,
+    check_schema_compatibility,
     file_sha256,
     review_fingerprint,
     verify_approval,
@@ -98,3 +99,37 @@ def test_fingerprint_ignora_ordem_das_entradas():
     before = review_fingerprint(mapping)
     mapping.entries.reverse()
     assert review_fingerprint(mapping) == before
+
+
+# ----------------------------------------------------------------------
+# Compatibilidade de versão do target_schema (Fase 4)
+# ----------------------------------------------------------------------
+
+
+def test_schema_compativel_quando_a_versao_bate():
+    result = check_schema_compatibility("2026.1", "2026.1")
+    assert result["compatible"] is True
+
+
+def test_schema_incompativel_interrompe():
+    with pytest.raises(ApprovalError, match="target_schema.yaml mudou"):
+        check_schema_compatibility("2026.1", "2026.2")
+
+
+def test_force_registra_a_incompatibilidade_em_vez_de_esconder():
+    result = check_schema_compatibility("2026.1", "2026.2", force=True)
+    assert result["compatible"] is False
+    assert result["mapping_version"] == "2026.1"
+    assert result["schema_version"] == "2026.2"
+
+
+def test_mapping_sem_versao_cai_para_o_approval():
+    result = check_schema_compatibility(
+        None, "2026.1", {"target_schema_version": "2026.1"}
+    )
+    assert result["compatible"] is True
+
+
+def test_sem_versao_em_lugar_nenhum_nao_inventa_veredito():
+    result = check_schema_compatibility(None, "2026.1")
+    assert result["compatible"] is None

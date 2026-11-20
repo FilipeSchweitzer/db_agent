@@ -25,3 +25,8 @@ class TableProfile(BaseModel):
 class DiscoveryReport(BaseModel):
     source_dialect: str
     tables: list[TableProfile]
+    # Colunas em que o perfilamento (nome ou forma do valor) viu indício de
+    # PII, mesmo que o modelo não tenha marcado `pii=true`. Fica no artefato
+    # para a política de backend e a auditoria não dependerem do julgamento
+    # do LLM.
+    pii_columns: list[str] = []

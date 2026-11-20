@@ -52,9 +52,19 @@ def generate(
         "--force",
         help="Gera mesmo se o mapping.json não bater com o que foi revisado.",
     ),
+    approved_by: str | None = typer.Option(
+        None,
+        "--approved-by",
+        help=(
+            "Quem aprovou o mapeamento (vai para auditoria.json). "
+            "Padrão: $MIGRA_APPROVER ou o usuário do sistema."
+        ),
+    ),
 ):
     """Fase 3 — gera os artefatos de migração a partir do mapeamento APROVADO."""
-    path = orchestrator.run_etl_generation(client, dry_run=dry_run, force=force)
+    path = orchestrator.run_etl_generation(
+        client, dry_run=dry_run, force=force, approved_by=approved_by
+    )
     if dry_run:
         print(f"[green]Plano validado:[/green] {path}")
         print("[yellow]Nada foi executado nem gerado além do plano.[/yellow]")
