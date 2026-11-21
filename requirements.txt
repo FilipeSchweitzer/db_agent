@@ -1,5 +1,6 @@
 # Orquestração / CLI
 typer==0.12.5
+click==8.0.4
 rich==13.9.2
 
 # Validação e config
