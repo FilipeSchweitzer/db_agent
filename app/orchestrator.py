@@ -106,9 +106,13 @@ def run_discovery(client_name: str) -> Path:
     started = time.perf_counter()
     started_at = datetime.now(UTC)
     engine = get_engine(cfg.source, read_only=True)
-    llm = get_llm_client()
 
-    report = DiscoveryAgent(llm).run(engine, cfg.source.dialect, cfg.scope_tables or None)
+    # O cliente LLM é construído só depois do perfilamento e da política de
+    # PII (dentro de `run`), para que a recusa por PII não seja mascarada por
+    # um erro de configuração do backend.
+    agent = DiscoveryAgent(llm_factory=get_llm_client)
+    report = agent.run(engine, cfg.source.dialect, cfg.scope_tables or None)
+    llm = agent.llm
 
     out_dir = _output_dir(cfg.project)
     out = out_dir / "discovery_report.json"

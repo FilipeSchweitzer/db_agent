@@ -17,6 +17,8 @@ e antes do 4/LLM porque a primeira chamada é o ponto sem volta.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from sqlalchemy.engine import Engine
 
 from app.db import introspection as tools
@@ -63,8 +65,40 @@ def _profile_column(engine: Engine, table: str, column: str) -> dict:
 
 
 class DiscoveryAgent:
-    def __init__(self, llm: LLMClient):
-        self.llm = llm
+    """Agente 1.
+
+    O cliente LLM pode ser passado pronto ou como fábrica. A fábrica só é
+    chamada na primeira leitura de `llm` — ou seja, depois do perfilamento e
+    da política de backend —, para que um erro de configuração do LLM não
+    mascare a recusa por PII.
+    """
+
+    def __init__(
+        self,
+        llm: LLMClient | None = None,
+        *,
+        llm_factory: Callable[[], LLMClient] | None = None,
+    ) -> None:
+        if llm is not None and llm_factory is not None:
+            raise ValueError(
+                "informe o cliente LLM ou a fábrica, não os dois"
+            )
+        if llm is None and llm_factory is None:
+            raise ValueError(
+                "informe um cliente LLM (llm=) ou uma fábrica (llm_factory=)"
+            )
+        self._llm = llm
+        self._llm_factory = llm_factory
+
+    @property
+    def llm(self) -> LLMClient:
+        """Construído uma única vez, na primeira leitura."""
+        if self._llm is None:
+            factory = self._llm_factory
+            if factory is None:  # pragma: no cover — __init__ garante um dos dois
+                raise ValueError("nenhum cliente LLM disponível")
+            self._llm = factory()
+        return self._llm
 
     def run(self, engine: Engine, dialect: str, tables: list[str] | None = None) -> DiscoveryReport:
         table_names = tables or tools.list_tables(engine)
@@ -82,7 +116,10 @@ class DiscoveryAgent:
         pii_columns = pii_columns_from_stats(raw_stats)
         enforce_pii_backend_policy(bool(pii_columns))
 
-        # 4. Só o padrão entra no prompt.
+        # 4. Só o padrão entra no prompt. O cliente LLM só é construído aqui,
+        # depois da política: a recusa por PII não pode ser mascarada por um
+        # erro de configuração do backend.
+        llm = self.llm
         profiles: list[TableProfile] = []
         for table, stats in raw_stats.items():
             safe_stats = [mask_stats(item) for item in stats]
@@ -94,7 +131,7 @@ class DiscoveryAgent:
                 "Produza o TableProfile completo para esta tabela."
             )
 
-            profile = self.llm.complete_structured(
+            profile = llm.complete_structured(
                 SYSTEM_PROMPT, user_prompt, TableProfile
             )
             # Garantias determinísticas por cima da resposta do modelo

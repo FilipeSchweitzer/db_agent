@@ -327,6 +327,24 @@ def test_agente1_nao_chama_llm_quando_pii_com_backend_remoto(monkeypatch):
     assert client.prompts == []
 
 
+def test_agente1_politica_de_pii_vem_antes_da_fabrica_de_llm(monkeypatch):
+    """A recusa por PII não pode ser mascarada por um erro de configuração."""
+    monkeypatch.setenv("LLM_BACKEND", "openai")
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    _legacy(monkeypatch)
+    chamadas: list[object] = []
+
+    def factory():
+        chamadas.append(object())
+        return ScriptedClient([RESPOSTA_PESSOA])
+
+    with pytest.raises(PIIPolicyError):
+        DiscoveryAgent(llm_factory=factory).run(object(), "firebird")
+
+    # A fábrica nem foi chamada: a política veio antes de qualquer LLM.
+    assert chamadas == []
+
+
 def test_agente1_sem_pii_aceita_backend_remoto(monkeypatch):
     monkeypatch.setenv("LLM_BACKEND", "openai")
     monkeypatch.delenv("LLM_BASE_URL", raising=False)
