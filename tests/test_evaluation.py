@@ -412,6 +412,13 @@ def test_offline_gera_relatorios_json_e_markdown(tmp_path):
     assert "Avaliação — caso" in md_path.read_text(encoding="utf-8")
 
 
+def test_offline_recusa_repeats_maior_que_um(tmp_path):
+    case = load_case(_write_case(tmp_path / "caso"))
+
+    with pytest.raises(ValueError, match="modo live"):
+        evaluate_case(case, mapping=_document(), repeats=2)
+
+
 def test_live_roda_o_agente_contra_o_discovery_congelado(tmp_path):
     case = load_case(_write_case(tmp_path / "caso"))
     responses = [_response_for(case, table) for table in case.target_schema.tables]

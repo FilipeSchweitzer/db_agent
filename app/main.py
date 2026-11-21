@@ -131,6 +131,10 @@ def evaluate(
     """Fase 5 — mede o agente contra um golden set (mapeamento manual)."""
     if repeats < 1:
         raise typer.BadParameter("--repeats precisa ser >= 1")
+    if mapping is not None and repeats != 1:
+        raise typer.BadParameter(
+            "--repeats só se aplica ao modo live (sem --mapping); use --repeats 1."
+        )
 
     try:
         loaded = load_case(resolve_case_ref(case))

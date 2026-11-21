@@ -100,6 +100,8 @@ def evaluate_case(
     """Avalia um caso e devolve o relatório completo (sem escrever arquivo)."""
     if repeats < 1:
         raise ValueError("repeats precisa ser >= 1")
+    if mapping is not None and repeats != 1:
+        raise ValueError("repeats só se aplica ao modo live (sem mapping)")
     if mapping is None and llm is None:
         raise ValueError("informe mapping=... (offline) ou llm=... (live)")
 
