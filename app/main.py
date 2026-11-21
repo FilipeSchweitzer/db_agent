@@ -21,6 +21,7 @@ from app.evaluation import (
     GoldenError,
     evaluate_case,
     load_case,
+    load_discovery_report,
     resolve_case_ref,
     scaffold_case,
     write_reports,
@@ -29,7 +30,6 @@ from app.llm import get_llm_client
 from app.privacy.policy import PIIPolicyError, enforce_pii_backend_policy
 from app.privacy.report import discovery_pii_columns
 from app.schemas.mapping import MappingDocument
-from app.schemas.profiling import DiscoveryReport
 
 app = typer.Typer(help="Pipeline de migração de dados legados.")
 
@@ -144,9 +144,11 @@ def evaluate(
 
     report_discovery = loaded.discovery
     if discovery is not None:
-        report_discovery = DiscoveryReport.model_validate_json(
-            discovery.read_text(encoding="utf-8")
-        )
+        try:
+            report_discovery = load_discovery_report(discovery)
+        except GoldenError as exc:
+            print(f"[red]Caso inválido:[/red] {exc}")
+            raise typer.Exit(code=2) from exc
 
     if mapping is not None:
         document = MappingDocument.model_validate_json(mapping.read_text(encoding="utf-8"))

@@ -46,6 +46,14 @@ class GoldenError(ValueError):
     """O caso golden está incompleto ou inconsistente."""
 
 
+def load_discovery_report(path: Path) -> DiscoveryReport:
+    """Lê e valida um relatório de discovery, com erro de entrada legível."""
+    try:
+        return DiscoveryReport.model_validate_json(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        raise GoldenError(f"{path}: relatório de discovery inválido: {exc}") from exc
+
+
 class GoldenMapping(BaseModel):
     """Um campo de destino e a origem que o mapeamento manual escolheu.
 
@@ -163,8 +171,13 @@ def load_case(case_path: str | Path) -> LoadedCase:
     except ValidationError as exc:
         raise GoldenError(f"{golden_path}: {exc}") from exc
 
-    target_schema = TargetSchema.load(schema_path)
-    report = DiscoveryReport.model_validate_json(discovery_path.read_text(encoding="utf-8"))
+    # Fronteira de entrada: qualquer falha ao carregar o schema do caso vira
+    # GoldenError, para o CLI não vazar traceback de YAML/Pydantic.
+    try:
+        target_schema = TargetSchema.load(schema_path)
+    except Exception as exc:
+        raise GoldenError(f"{schema_path}: target_schema inválido: {exc}") from exc
+    report = load_discovery_report(discovery_path)
     warnings: list[str] = []
 
     _validate_against_schema(golden, target_schema)

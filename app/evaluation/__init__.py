@@ -14,6 +14,7 @@ from app.evaluation.golden import (
     GoldenError,
     LoadedCase,
     load_case,
+    load_discovery_report,
     resolve_case_ref,
     scaffold_case,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "LoadedCase",
     "evaluate_case",
     "load_case",
+    "load_discovery_report",
     "render_markdown",
     "resolve_case_ref",
     "scaffold_case",

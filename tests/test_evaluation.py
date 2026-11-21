@@ -392,6 +392,22 @@ def test_caso_sem_arquivos_falha_cedo(tmp_path):
         load_case(tmp_path / "vazio")
 
 
+def test_caso_com_discovery_corrompido_falha_com_erro_limpo(tmp_path):
+    base = _write_case(tmp_path / "caso")
+    (base / DISCOVERY_FILE).write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(GoldenError, match="discovery inválido"):
+        load_case(base)
+
+
+def test_caso_com_target_schema_corrompido_falha_com_erro_limpo(tmp_path):
+    base = _write_case(tmp_path / "caso")
+    (base / SCHEMA_FILE).write_text("[tables: ", encoding="utf-8")
+
+    with pytest.raises(GoldenError):
+        load_case(base)
+
+
 # ----------------------------------------------------------------------
 # Modos de execução
 # ----------------------------------------------------------------------
